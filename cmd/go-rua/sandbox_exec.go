@@ -1,15 +1,15 @@
 package main
 
 import (
-    "encoding/json"
-    "fmt"
-    "os"
-    "os/exec"
-    "path/filepath"
-    "slices"
-    "strings"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
 
-    ll "github.com/landlock-lsm/go-landlock/landlock"
+	ll "github.com/landlock-lsm/go-landlock/landlock"
 )
 
 // sandboxExec is invoked as a hidden subcommand: go-rua sandbox-exec <cmd> [args...]
@@ -21,17 +21,17 @@ func sandboxExec() {
 		fmt.Fprintln(os.Stderr, "sandbox-exec: missing RUA_SANDBOX_CFG")
 		os.Exit(97)
 	}
-    var cfg struct {
-        RO              []string
-        ROX             []string
-        RW              []string
-        RWX             []string
-        Env             []string
-        BestEffort      bool
-        UnrestrictedFS  bool
-        UnrestrictedNet bool
-        UseBubblewrap   bool
-    }
+	var cfg struct {
+		RO              []string
+		ROX             []string
+		RW              []string
+		RWX             []string
+		Env             []string
+		BestEffort      bool
+		UnrestrictedFS  bool
+		UnrestrictedNet bool
+		UseBubblewrap   bool
+	}
 	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "sandbox-exec: invalid config:", err)
 		os.Exit(98)
@@ -43,24 +43,24 @@ func sandboxExec() {
 		os.Exit(99)
 	}
 
-    // Decide execution strategy: bubblewrap for net isolation if requested/available, else Landlock-only.
-    useBwrap := false
-    if cfg.UseBubblewrap && !cfg.UnrestrictedNet {
-        if _, err := exec.LookPath("bwrap"); err == nil {
-            useBwrap = true
-        }
-    }
-    // Apply Landlock only when not using bubblewrap (to avoid interfering with bwrap mounts)
-    if !useBwrap && !cfg.UnrestrictedFS {
-        if err := applyLandlock(cfg); err != nil {
-            if cfg.BestEffort {
-                fmt.Fprintln(os.Stderr, "warning: failed to apply Landlock (best-effort):", err)
-            } else {
-                fmt.Fprintln(os.Stderr, "sandbox-exec: failed to apply Landlock:", err)
-                os.Exit(100)
-            }
-        }
-    }
+	// Decide execution strategy: bubblewrap for net isolation if requested/available, else Landlock-only.
+	useBwrap := false
+	if cfg.UseBubblewrap && !cfg.UnrestrictedNet {
+		if _, err := exec.LookPath("bwrap"); err == nil {
+			useBwrap = true
+		}
+	}
+	// Apply Landlock only when not using bubblewrap (to avoid interfering with bwrap mounts)
+	if !useBwrap && !cfg.UnrestrictedFS {
+		if err := applyLandlock(cfg); err != nil {
+			if cfg.BestEffort {
+				fmt.Fprintln(os.Stderr, "warning: failed to apply Landlock (best-effort):", err)
+			} else {
+				fmt.Fprintln(os.Stderr, "sandbox-exec: failed to apply Landlock:", err)
+				os.Exit(100)
+			}
+		}
+	}
 
 	// Build sanitized environment for the target
 	childEnv := buildEnv(cfg.Env)
@@ -91,48 +91,48 @@ func sandboxExec() {
 		}
 	}
 
-    // Best-effort: prevent gaining privileges in the child
-    // no_new_privs prevents gaining privileges; ignore error on older kernels
-    _ = prSetNoNewPrivs()
+	// Best-effort: prevent gaining privileges in the child
+	// no_new_privs prevents gaining privileges; ignore error on older kernels
+	_ = prSetNoNewPrivs()
 
-    // Optionally wrap with bubblewrap for network isolation
-    if useBwrap && !cfg.UnrestrictedNet {
-        bwargs := []string{"bwrap", "--die-with-parent", "--unshare-net", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"}
-        // map binds
-        for _, p := range cfg.RO {
-            bwargs = append(bwargs, "--ro-bind", p, p)
-        }
-        for _, p := range cfg.ROX {
-            bwargs = append(bwargs, "--ro-bind", p, p)
-        }
-        for _, p := range cfg.RW {
-            bwargs = append(bwargs, "--bind", p, p)
-        }
-        for _, p := range cfg.RWX {
-            bwargs = append(bwargs, "--bind", p, p)
-        }
-        bwargs = append(bwargs, "--", prog)
-        bwargs = append(bwargs, args[1:]...)
-        if err := syscallExec(bwargs[0], bwargs, childEnv); err != nil {
-            fmt.Fprintln(os.Stderr, "exec failed:", err)
-            os.Exit(101)
-        }
-        return
-    }
+	// Optionally wrap with bubblewrap for network isolation
+	if useBwrap && !cfg.UnrestrictedNet {
+		bwargs := []string{"bwrap", "--die-with-parent", "--unshare-net", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"}
+		// map binds
+		for _, p := range cfg.RO {
+			bwargs = append(bwargs, "--ro-bind", p, p)
+		}
+		for _, p := range cfg.ROX {
+			bwargs = append(bwargs, "--ro-bind", p, p)
+		}
+		for _, p := range cfg.RW {
+			bwargs = append(bwargs, "--bind", p, p)
+		}
+		for _, p := range cfg.RWX {
+			bwargs = append(bwargs, "--bind", p, p)
+		}
+		bwargs = append(bwargs, "--", prog)
+		bwargs = append(bwargs, args[1:]...)
+		if err := syscallExec(bwargs[0], bwargs, childEnv); err != nil {
+			fmt.Fprintln(os.Stderr, "exec failed:", err)
+			os.Exit(101)
+		}
+		return
+	}
 
-    // Replace our process image with the target (no bwrap)
-    if err := syscallExec(prog, append([]string{prog}, args[1:]...), childEnv); err != nil {
-        fmt.Fprintln(os.Stderr, "exec failed:", err)
-        os.Exit(101)
-    }
+	// Replace our process image with the target (no bwrap)
+	if err := syscallExec(prog, append([]string{prog}, args[1:]...), childEnv); err != nil {
+		fmt.Fprintln(os.Stderr, "exec failed:", err)
+		os.Exit(101)
+	}
 }
 
 // applyLandlock constructs and installs a Landlock ruleset based on cfg.
 func applyLandlock(cfg struct {
-    RO, ROX, RW, RWX                            []string
-    Env                                         []string
-    BestEffort, UnrestrictedFS, UnrestrictedNet bool
-    UseBubblewrap                               bool
+	RO, ROX, RW, RWX                            []string
+	Env                                         []string
+	BestEffort, UnrestrictedFS, UnrestrictedNet bool
+	UseBubblewrap                               bool
 }) error {
 	// Determine the superset of filesystem accesses we might grant.
 	handled := ll.AccessFSReadFile | ll.AccessFSReadDir |
@@ -157,18 +157,18 @@ func applyLandlock(cfg struct {
 
 	// Default allowances similar to a typical baseline
 	// Allow read-only access to system dirs and devices
-    defaultsRO := []string{"/etc", "/proc", "/sys"}
-    // Exec allowed from standard system locations
-    defaultsROX := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
-    // Writable temp areas commonly used by build tools
-    defaultsRWX := []string{"/tmp", "/var/tmp"}
-    // Device nodes that often need write access (tty, null) and pseudo terminals/shm
-    defaultsRW := []string{"/dev/null", "/dev/tty", "/dev/pts", "/dev/shm"}
+	defaultsRO := []string{"/etc", "/proc", "/sys"}
+	// Exec allowed from standard system locations
+	defaultsROX := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
+	// Writable temp areas commonly used by build tools
+	defaultsRWX := []string{"/tmp", "/var/tmp"}
+	// Device nodes that often need write access (tty, null) and pseudo terminals/shm
+	defaultsRW := []string{"/dev/null", "/dev/tty", "/dev/pts", "/dev/shm"}
 
 	// Merge defaults with user-provided (Go 1.22+)
 	ro := slices.Concat(defaultsRO, cfg.RO)
 	rox := slices.Concat(defaultsROX, cfg.ROX)
-    rw := slices.Concat(defaultsRW, cfg.RW)
+	rw := slices.Concat(defaultsRW, cfg.RW)
 	rwx := slices.Concat(defaultsRWX, cfg.RWX)
 
 	roAcc := ll.AccessFSReadFile | ll.AccessFSReadDir

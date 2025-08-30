@@ -50,24 +50,24 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool) error {
 	// FAKEROOT workaround similar to rua
 	args = append(args, "-f")
 
-    // Prefer bubblewrap to enforce network isolation when offline, unless disabled
-    useBwrap := false
-    if offline {
-        if v := os.Getenv("RUA_NO_BWRAP"); v == "1" || v == "true" {
-            useBwrap = false
-        } else {
-            useBwrap = true
-        }
-    }
-    cfg := sandbox.Config{
-        RO:              ro,
-        ROX:             rox,
-        RWX:             rwx,
-        Env:             envs,
-        UnrestrictedNet: !offline,
-        UseBubblewrap:   useBwrap,
-    }
-    return sandbox.Run(cfg, args)
+	// Prefer bubblewrap to enforce network isolation when offline, unless disabled
+	useBwrap := false
+	if offline {
+		if v := os.Getenv("RUA_NO_BWRAP"); v == "1" || v == "true" {
+			useBwrap = false
+		} else {
+			useBwrap = true
+		}
+	}
+	cfg := sandbox.Config{
+		RO:              ro,
+		ROX:             rox,
+		RWX:             rwx,
+		Env:             envs,
+		UnrestrictedNet: !offline,
+		UseBubblewrap:   useBwrap,
+	}
+	return sandbox.Run(cfg, args)
 }
 
 // RunShell opens a shell in dir within minimal sandbox (used for review/inspect)
