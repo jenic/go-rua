@@ -59,14 +59,15 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool) error {
 			useBwrap = true
 		}
 	}
-	cfg := sandbox.Config{
-		RO:              ro,
-		ROX:             rox,
-		RWX:             rwx,
-		Env:             envs,
-		UnrestrictedNet: !offline,
-		UseBubblewrap:   useBwrap,
-	}
+    cfg := sandbox.Config{
+        RO:              ro,
+        ROX:             rox,
+        RWX:             rwx,
+        Env:             envs,
+        UnrestrictedNet: !offline,
+        UseBubblewrap:   useBwrap,
+        SeccompDenylist: true,
+    }
 	return sandbox.Run(cfg, args)
 }
 

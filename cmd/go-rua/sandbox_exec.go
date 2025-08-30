@@ -31,6 +31,7 @@ func sandboxExec() {
 		UnrestrictedFS  bool
 		UnrestrictedNet bool
 		UseBubblewrap   bool
+		SeccompDenylist bool
 	}
 	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "sandbox-exec: invalid config:", err)
@@ -41,6 +42,36 @@ func sandboxExec() {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "sandbox-exec: no command provided")
 		os.Exit(99)
+	}
+
+	// If this invocation is seccomp-only (launched inside bwrap), apply seccomp and exec target.
+	if os.Getenv("RUA_SECCOMP_ONLY") == "1" {
+		if cfg.SeccompDenylist {
+			if err := applySeccompDenylist(); err != nil {
+				if cfg.BestEffort {
+					fmt.Fprintln(os.Stderr, "warning: failed to apply seccomp (best-effort):", err)
+				} else {
+					fmt.Fprintln(os.Stderr, "sandbox-exec: failed to apply seccomp:", err)
+					os.Exit(102)
+				}
+			}
+		}
+		childEnv := buildEnv(cfg.Env)
+		prog := args[0]
+		if !strings.Contains(prog, "/") {
+			var pathVal string
+			for _, e := range childEnv { if strings.HasPrefix(e, "PATH=") { pathVal = strings.TrimPrefix(e, "PATH=") } }
+			if pathVal == "" { pathVal = "/usr/bin:/bin" }
+			_ = os.Setenv("PATH", pathVal)
+			if p, err := exec.LookPath(prog); err == nil { prog = p }
+		} else if !strings.HasPrefix(prog, "/") {
+			if ap, err := filepath.Abs(prog); err == nil { prog = ap }
+		}
+		if err := syscallExec(prog, append([]string{prog}, args[1:]...), childEnv); err != nil {
+			fmt.Fprintln(os.Stderr, "exec failed:", err)
+			os.Exit(101)
+		}
+		return
 	}
 
 	// Decide execution strategy: bubblewrap for net isolation if requested/available, else Landlock-only.
@@ -111,28 +142,47 @@ func sandboxExec() {
 		for _, p := range cfg.RWX {
 			bwargs = append(bwargs, "--bind", p, p)
 		}
-		bwargs = append(bwargs, "--", prog)
-		bwargs = append(bwargs, args[1:]...)
-		if err := syscallExec(bwargs[0], bwargs, childEnv); err != nil {
-			fmt.Fprintln(os.Stderr, "exec failed:", err)
-			os.Exit(101)
-		}
-		return
-	}
+    // Inside bwrap, re-enter this binary in seccomp-only mode so that bwrap can perform needed syscalls first.
+    self := os.Args[0]
+    if !strings.HasPrefix(self, "/") {
+        if ap, err := filepath.Abs(self); err == nil { self = ap }
+    }
+    bwargs = append(bwargs, "--", self, "sandbox-exec")
+    bwargs = append(bwargs, args...)
+    // Signal to inner invocation to only apply seccomp
+    childEnv = append(childEnv, "RUA_SECCOMP_ONLY=1")
+    if err := syscallExec(bwargs[0], bwargs, childEnv); err != nil {
+        fmt.Fprintln(os.Stderr, "exec failed:", err)
+        os.Exit(101)
+    }
+    return
+}
 
-	// Replace our process image with the target (no bwrap)
-	if err := syscallExec(prog, append([]string{prog}, args[1:]...), childEnv); err != nil {
-		fmt.Fprintln(os.Stderr, "exec failed:", err)
-		os.Exit(101)
-	}
+    // Apply seccomp denylist if requested (no bwrap path)
+    if cfg.SeccompDenylist {
+        if err := applySeccompDenylist(); err != nil {
+            if cfg.BestEffort {
+                fmt.Fprintln(os.Stderr, "warning: failed to apply seccomp (best-effort):", err)
+            } else {
+                fmt.Fprintln(os.Stderr, "sandbox-exec: failed to apply seccomp:", err)
+                os.Exit(102)
+            }
+        }
+    }
+    // Replace our process image with the target (no bwrap)
+    if err := syscallExec(prog, append([]string{prog}, args[1:]...), childEnv); err != nil {
+        fmt.Fprintln(os.Stderr, "exec failed:", err)
+        os.Exit(101)
+    }
 }
 
 // applyLandlock constructs and installs a Landlock ruleset based on cfg.
 func applyLandlock(cfg struct {
-	RO, ROX, RW, RWX                            []string
-	Env                                         []string
-	BestEffort, UnrestrictedFS, UnrestrictedNet bool
-	UseBubblewrap                               bool
+    RO, ROX, RW, RWX                            []string
+    Env                                         []string
+    BestEffort, UnrestrictedFS, UnrestrictedNet bool
+    UseBubblewrap                               bool
+    SeccompDenylist                             bool
 }) error {
 	// Determine the superset of filesystem accesses we might grant.
 	handled := ll.AccessFSReadFile | ll.AccessFSReadDir |
