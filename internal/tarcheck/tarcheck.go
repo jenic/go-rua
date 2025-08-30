@@ -147,7 +147,8 @@ func isExec(perm string) bool {
 		return false
 	}
 	// positions 3,6,9 correspond to x bits; also s/t imply executable
-	for _, i := range []int{3, 6, 9} {
+	// Correct positions are 4,7,10 when including file type at index 0
+	for _, i := range []int{4, 7, 10} {
 		c := perm[i-1]
 		if c == 'x' || c == 's' || c == 't' {
 			return true
@@ -161,7 +162,8 @@ func isSUID(perm string) bool {
 		return false
 	}
 	// lower or upper 's' in user or group exec spots imply setuid/setgid
-	for _, i := range []int{3, 6} {
+	// Correct positions are 4 (user exec) and 7 (group exec)
+	for _, i := range []int{4, 7} {
 		c := perm[i-1]
 		if c == 's' || c == 'S' {
 			return true
