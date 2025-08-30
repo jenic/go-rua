@@ -28,10 +28,10 @@ func usage() {
 	fmt.Println("  builddir [--offline] [--force] [dir]    Build a PKGBUILD directory in sandbox")
 	fmt.Println("  shellcheck [file|dir]                   Run shellcheck for PKGBUILD (sandboxed)")
 	fmt.Println("  namcap [file|dir]                       Run namcap for PKGBUILD (sandboxed)")
-	fmt.Println("  install [--offline] [--force] <pkgs..>  Clone AUR repos, review, build, stage artifacts")
+    fmt.Println("  install [--offline] [--force] [--install] [--plan] <pkgs..>  Clone AUR repos, review, build, stage, optional install")
 	fmt.Println("  search <keywords...>                    Search AUR by name/desc")
 	fmt.Println("  info <pkg1> [pkg2 ...]                  Show AUR package info")
-	fmt.Println("  upgrade --printonly                     Print outdated foreign (AUR) packages")
+    fmt.Println("  upgrade [--printonly|--apply]           Print or apply upgrades for AUR packages")
 	fmt.Println("  version                                 Show version")
 	fmt.Println()
 }
