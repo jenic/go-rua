@@ -7,7 +7,7 @@ CMD_DIR := ./cmd/go-rua
 OUT := $(BIN_DIR)/$(BINARY)
 PKG := ./...
 
-.PHONY: help build run fmt vet test check clean
+.PHONY: help build run fmt vet test check smoke clean
 
 help: ## Show available make targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .+$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -28,8 +28,10 @@ vet: ## Static analysis with go vet
 test: ## Run tests
 	$(GO) test $(PKG)
 
+smoke: build ## Run a short integration smoke test (best-effort)
+	./scripts/smoke.sh
+
 check: fmt vet test ## Format, vet, and test
 
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR)
-
