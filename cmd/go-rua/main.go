@@ -20,6 +20,27 @@ import (
 
 var Version string
 
+// test seams for dependency injection
+var (
+    aurInfoFn              = aur.Info
+    aurSearchANDFn         = aur.SearchAND
+    installPlanFn          = install.BuildPlan
+    installInstallFn       = install.Install
+    summarizeAURFn         = install.SummarizeForAUR
+    formatSummaryFn        = install.FormatSummary
+    pacmanSudoFn           = pacman.SudoCommand
+    pacmanInstallRepoDepsFn = pacman.InstallRepoDeps
+    getForeignPkgsFn       = pacman.GetForeignPackages
+    vercmpFn               = pacman.Vercmp
+    getIgnoredPkgsFn       = pacman.GetIgnoredPackages
+    tarcheckFn             = tarcheck.TarCheck
+    shellcheckFn           = shellutil.Shellcheck
+    namcapFn               = shellutil.Namcap
+    pathsInitFn            = paths.MustInit
+    pathsInitNoMakepkgFn   = paths.MustInitNoMakepkgChecks
+    buildDirectoryCLIFn    = build.BuildDirectory
+)
+
 func usage() {
 	fmt.Println("go-rua: AUR helper (Go), sandboxed by Landlock")
 	fmt.Println()
@@ -151,13 +172,13 @@ func builddirCmd(args []string) {
 		fatalf("failed to resolve path: %v", err)
 	}
 
-	p := paths.MustInit()
+    p := pathsInitFn()
 	if *forceBwrap {
 		_ = os.Setenv("RUA_ALWAYS_BWRAP", "1")
 	}
-	if err := build.BuildDirectory(abs, p, *offline, *force, !*noSeccomp); err != nil {
-		fatalf("build failed: %v", err)
-	}
+    if err := buildDirectoryCLIFn(abs, p, *offline, *force, !*noSeccomp); err != nil {
+        fatalf("build failed: %v", err)
+    }
 }
 
 func builddirUsage() {
@@ -187,8 +208,8 @@ func shellcheckCmd(args []string) {
 		fatalf("cannot access %s: %v", target, err)
 	}
 
-	p := paths.MustInitNoMakepkgChecks()
-	if err := shellutil.Shellcheck(target, p); err != nil {
+    p := pathsInitNoMakepkgFn()
+    if err := shellcheckFn(target, p); err != nil {
 		if err != nil {
 			fatalf("shellcheck failed: %v", err)
 		}
@@ -210,8 +231,8 @@ func namcapCmd(args []string) {
 	} else {
 		target = fs.Arg(0)
 	}
-	p := paths.MustInitNoMakepkgChecks()
-	if err := shellutil.Namcap(target, p); err != nil {
+    p := pathsInitNoMakepkgFn()
+    if err := namcapFn(target, p); err != nil {
 		fatalf("namcap failed: %v", err)
 	}
 }
@@ -237,19 +258,19 @@ func installCmd(args []string) {
 		fs.Usage()
 		return
 	}
-	p := paths.MustInit()
+    p := pathsInitFn()
 	if err := buildDepsNote(); err != nil { /* ignore */
 	}
 	if *planOnly {
-		infos, err := aur.Info(pkgs)
+        infos, err := aurInfoFn(pkgs)
 		if err != nil {
 			fatalf("failed to fetch AUR info: %v", err)
 		}
-		sum, err := install.SummarizeForAUR(pkgs, infos)
-		if err == nil {
-			fmt.Print(install.FormatSummary(sum))
-		}
-		plan, err := install.BuildPlan(pkgs)
+        sum, err := summarizeAURFn(pkgs, infos)
+        if err == nil {
+            fmt.Print(formatSummaryFn(sum))
+        }
+        plan, err := installPlanFn(pkgs)
 		if err != nil {
 			fatalf("plan failed: %v", err)
 		}
@@ -261,7 +282,7 @@ func installCmd(args []string) {
 		}
 		if len(plan.RepoMissing) > 0 {
 			fmt.Printf("  %s %s\n", term.Yellow("Repo deps missing:"), strings.Join(plan.RepoMissing, ", "))
-			fmt.Printf("    Install: %s pacman -S --needed %s\n", pacman.SudoCommand(), strings.Join(plan.RepoMissing, " "))
+            fmt.Printf("    Install: %s pacman -S --needed %s\n", pacmanSudoFn(), strings.Join(plan.RepoMissing, " "))
 		} else {
 			fmt.Println("  Repo deps missing: none")
 		}
@@ -271,29 +292,29 @@ func installCmd(args []string) {
 		return
 	}
 	// Print a pacman dependency summary before interactive steps
-	if infos, err := aur.Info(pkgs); err == nil {
-		if sum, err := install.SummarizeForAUR(pkgs, infos); err == nil {
-			fmt.Print(install.FormatSummary(sum))
-		}
-	}
+    if infos, err := aurInfoFn(pkgs); err == nil {
+        if sum, err := summarizeAURFn(pkgs, infos); err == nil {
+            fmt.Print(formatSummaryFn(sum))
+        }
+    }
 	// Optionally install missing repo deps
 	if *installRepoDeps {
-		plan, err := install.BuildPlan(pkgs)
+        plan, err := installPlanFn(pkgs)
 		if err != nil {
 			fatalf("plan failed: %v", err)
 		}
 		if len(plan.RepoMissing) > 0 {
 			fmt.Printf("Installing missing repo deps: %s\n", strings.Join(plan.RepoMissing, ", "))
-			if err := pacman.InstallRepoDeps(plan.RepoMissing); err != nil {
-				fatalf("pacman install failed: %v", err)
-			}
-		}
-	}
-	if err := (func() error {
-		return install.Install(pkgs, p, install.Options{Offline: *offline, Force: *force, InstallBuilt: *installBuilt, DisableSeccomp: *noSeccomp, AsDeps: *asdeps})
-	})(); err != nil {
-		fatalf("install failed: %v", err)
-	}
+            if err := pacmanInstallRepoDepsFn(plan.RepoMissing); err != nil {
+                fatalf("pacman install failed: %v", err)
+            }
+        }
+    }
+    if err := (func() error {
+        return installInstallFn(pkgs, p, install.Options{Offline: *offline, Force: *force, InstallBuilt: *installBuilt, DisableSeccomp: *noSeccomp, AsDeps: *asdeps})
+    })(); err != nil {
+        fatalf("install failed: %v", err)
+    }
 }
 
 func installUsage() {
@@ -319,7 +340,7 @@ func searchCmd(args []string) {
 		fs.Usage()
 		return
 	}
-	results, err := aur.SearchAND(fs.Args())
+    results, err := aurSearchANDFn(fs.Args())
 	if err != nil {
 		fatalf("search failed: %v", err)
 	}
@@ -342,7 +363,7 @@ func infoCmd(args []string) {
 		fs.Usage()
 		return
 	}
-	info, err := aur.Info(fs.Args())
+    info, err := aurInfoFn(fs.Args())
 	if err != nil {
 		fatalf("info failed: %v", err)
 	}
@@ -411,9 +432,9 @@ func tarcheckCmd(args []string) {
 	if _, err := os.Stat(target); err != nil {
 		fatalf("cannot access %s: %v", target, err)
 	}
-	if err := tarcheck.TarCheck(target); err != nil {
-		fatalf("tarcheck failed: %v", err)
-	}
+    if err := tarcheckFn(target); err != nil {
+        fatalf("tarcheck failed: %v", err)
+    }
 	fmt.Fprintf(os.Stderr, "Finished checking package: %s\n", target)
 }
 
@@ -460,7 +481,7 @@ func upgradeCmd(args []string) {
 				fmt.Printf("  %s  %s -> %s\n", it.Name, it.Local, it.Latest)
 			}
 		}
-		plan, err := install.BuildPlan(outdated)
+        plan, err := installPlanFn(outdated)
 		if err != nil {
 			fatalf("plan failed: %v", err)
 		}
@@ -472,7 +493,7 @@ func upgradeCmd(args []string) {
 		}
 		if len(plan.RepoMissing) > 0 {
 			fmt.Printf("  %s %s\n", term.Yellow("Repo deps missing:"), strings.Join(plan.RepoMissing, ", "))
-			fmt.Printf("    Install: %s pacman -S --needed %s\n", pacman.SudoCommand(), strings.Join(plan.RepoMissing, " "))
+            fmt.Printf("    Install: %s pacman -S --needed %s\n", pacmanSudoFn(), strings.Join(plan.RepoMissing, " "))
 		} else {
 			fmt.Println("  Repo deps missing: none")
 		}
@@ -485,23 +506,23 @@ func upgradeCmd(args []string) {
 		return
 	}
 	// apply: build and install in order
-	plan, err := install.BuildPlan(outdated)
+    plan, err := installPlanFn(outdated)
 	if err != nil {
 		fatalf("plan failed: %v", err)
 	}
 	if *installRepoDeps && len(plan.RepoMissing) > 0 {
 		fmt.Printf("Installing missing repo deps: %s\n", strings.Join(plan.RepoMissing, ", "))
-		if err := pacman.InstallRepoDeps(plan.RepoMissing); err != nil {
-			fatalf("pacman install failed: %v", err)
-		}
-	}
-	p := paths.MustInit()
-	for _, name := range plan.BuildOrder {
-		fmt.Printf("\n==> Upgrading AUR pkg: %s\n", name)
-		if err := install.Install([]string{name}, p, install.Options{Offline: *offline, Force: *force, NonInteractive: true, InstallBuilt: true, DisableSeccomp: *noSeccomp}); err != nil {
-			fatalf("upgrade failed for %s: %v", name, err)
-		}
-	}
+        if err := pacmanInstallRepoDepsFn(plan.RepoMissing); err != nil {
+            fatalf("pacman install failed: %v", err)
+        }
+    }
+    p := pathsInitFn()
+    for _, name := range plan.BuildOrder {
+        fmt.Printf("\n==> Upgrading AUR pkg: %s\n", name)
+        if err := installInstallFn([]string{name}, p, install.Options{Offline: *offline, Force: *force, NonInteractive: true, InstallBuilt: true, DisableSeccomp: *noSeccomp}); err != nil {
+            fatalf("upgrade failed for %s: %v", name, err)
+        }
+    }
 }
 
 func upgradeUsage() {
@@ -523,7 +544,7 @@ func buildDepsNote() error {
 
 // findOutdated returns names of foreign packages that have newer AUR versions
 func findOutdated(devel bool, ignoreCSV string) ([]string, []string, error) {
-	foreign, err := pacman.GetForeignPackages()
+    foreign, err := getForeignPkgsFn()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -534,7 +555,7 @@ func findOutdated(devel bool, ignoreCSV string) ([]string, []string, error) {
 	if len(names) == 0 {
 		return nil, nil, nil
 	}
-	infos, err := aur.Info(names)
+    infos, err := aurInfoFn(names)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -552,7 +573,7 @@ func findOutdated(devel bool, ignoreCSV string) ([]string, []string, error) {
 			}
 		}
 	}
-	if sysIg, err := pacman.GetIgnoredPackages(); err == nil {
+    if sysIg, err := getIgnoredPkgsFn(); err == nil {
 		for _, s := range sysIg {
 			ignoreSet[s] = struct{}{}
 		}
@@ -574,10 +595,10 @@ func findOutdated(devel bool, ignoreCSV string) ([]string, []string, error) {
 			outdated = append(outdated, f.Name)
 			continue
 		}
-		cmp, err := pacman.Vercmp(f.Version, latest)
-		if err != nil {
-			continue
-		}
+        cmp, err := vercmpFn(f.Version, latest)
+        if err != nil {
+            continue
+        }
 		if cmp < 0 {
 			outdated = append(outdated, f.Name)
 		}
@@ -602,7 +623,7 @@ type OutdatedItem struct {
 }
 
 func listOutdatedDetailed(devel bool, ignoreCSV string) ([]OutdatedItem, []string, error) {
-	foreign, err := pacman.GetForeignPackages()
+    foreign, err := getForeignPkgsFn()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -613,7 +634,7 @@ func listOutdatedDetailed(devel bool, ignoreCSV string) ([]OutdatedItem, []strin
 	if len(names) == 0 {
 		return nil, nil, nil
 	}
-	infos, err := aur.Info(names)
+    infos, err := aurInfoFn(names)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -630,7 +651,7 @@ func listOutdatedDetailed(devel bool, ignoreCSV string) ([]OutdatedItem, []strin
 			}
 		}
 	}
-	if sysIg, err := pacman.GetIgnoredPackages(); err == nil {
+    if sysIg, err := getIgnoredPkgsFn(); err == nil {
 		for _, s := range sysIg {
 			ignoreSet[s] = struct{}{}
 		}
@@ -650,10 +671,10 @@ func listOutdatedDetailed(devel bool, ignoreCSV string) ([]OutdatedItem, []strin
 			items = append(items, OutdatedItem{Name: f.Name, Local: f.Version, Latest: latest})
 			continue
 		}
-		cmp, err := pacman.Vercmp(f.Version, latest)
-		if err == nil && cmp < 0 {
-			items = append(items, OutdatedItem{Name: f.Name, Local: f.Version, Latest: latest})
-		}
+        cmp, err := vercmpFn(f.Version, latest)
+        if err == nil && cmp < 0 {
+            items = append(items, OutdatedItem{Name: f.Name, Local: f.Version, Latest: latest})
+        }
 	}
 	return items, nonexistent, nil
 }

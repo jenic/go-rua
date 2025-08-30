@@ -1,14 +1,15 @@
 package main
 
 import (
-	"bytes"
-	"io"
-	"net/http"
-	"os"
-	"path/filepath"
-	"testing"
+    "bytes"
+    "io"
+    "net/http"
+    "os"
+    "path/filepath"
+    "testing"
 
-	"go-rua/internal/aur"
+    "go-rua/internal/aur"
+    "go-rua/internal/pacman"
 )
 
 type rtFunc func(*http.Request) (*http.Response, error)
@@ -35,6 +36,11 @@ func TestIsDevelPkg(t *testing.T) {
 }
 
 func TestFindOutdatedAndListDetailed(t *testing.T) {
+    // reset seams in case other tests modified them
+    getForeignPkgsFn = pacman.GetForeignPackages
+    vercmpFn = pacman.Vercmp
+    getIgnoredPkgsFn = pacman.GetIgnoredPackages
+    aurInfoFn = aur.Info
 	// Fake pacman and vercmp
 	bin := t.TempDir()
 	writeExe(t, bin, "pacman", `
