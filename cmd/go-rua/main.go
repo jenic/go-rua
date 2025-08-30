@@ -141,6 +141,7 @@ func installCmd(args []string) {
     fs := flag.NewFlagSet("install", flag.ExitOnError)
     offline := fs.Bool("offline", false, "Forbid internet access while building")
     force := fs.Bool("force", false, "Pass --force to makepkg")
+    planOnly := fs.Bool("plan", false, "Print build plan and exit")
     _ = fs.Parse(args)
     pkgs := fs.Args()
     if len(pkgs) == 0 {
@@ -148,6 +149,36 @@ func installCmd(args []string) {
     }
     p := paths.MustInit()
     if err := buildDepsNote(); err != nil { /* ignore */
+    }
+    if *planOnly {
+        infos, err := aur.Info(pkgs)
+        if err != nil {
+            fatalf("failed to fetch AUR info: %v", err)
+        }
+        sum, err := install.SummarizeForAUR(pkgs, infos)
+        if err == nil {
+            fmt.Print(install.FormatSummary(sum))
+        }
+        plan, err := install.BuildPlan(pkgs)
+        if err != nil {
+            fatalf("plan failed: %v", err)
+        }
+        fmt.Println("Plan:")
+        if len(plan.BuildOrder) == 0 {
+            fmt.Println("  (no AUR builds needed)")
+        } else {
+            fmt.Printf("  Build order: %s\n", strings.Join(plan.BuildOrder, ", "))
+        }
+        if len(plan.RepoMissing) > 0 {
+            fmt.Printf("  Repo deps missing: %s\n", strings.Join(plan.RepoMissing, ", "))
+            fmt.Printf("    Install: sudo pacman -S --needed %s\n", strings.Join(plan.RepoMissing, " "))
+        } else {
+            fmt.Println("  Repo deps missing: none")
+        }
+        if len(plan.Unknown) > 0 {
+            fmt.Printf("  Unknown deps: %s\n", strings.Join(plan.Unknown, ", "))
+        }
+        return
     }
     // Print a pacman dependency summary before interactive steps
     if infos, err := aur.Info(pkgs); err == nil {
