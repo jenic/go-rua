@@ -1,6 +1,6 @@
 module go-rua
 
-go 1.21
+go 1.24
 
 require github.com/landlock-lsm/go-landlock v0.0.0-20250303204525-1544bccde3a3
 

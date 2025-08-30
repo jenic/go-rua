@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	ll "github.com/landlock-lsm/go-landlock/landlock"
@@ -124,14 +125,11 @@ func applyLandlock(cfg struct {
 	defaultsROX := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
 	defaultsRWX := []string{"/tmp"}
 
-	// Merge defaults with user-provided
-	ro := append([]string{}, defaultsRO...)
-	ro = append(ro, cfg.RO...)
-	rox := append([]string{}, defaultsROX...)
-	rox = append(rox, cfg.ROX...)
-	rw := append([]string{}, cfg.RW...)
-	rwx := append([]string{}, defaultsRWX...)
-	rwx = append(rwx, cfg.RWX...)
+	// Merge defaults with user-provided (Go 1.22+)
+	ro := slices.Concat(defaultsRO, cfg.RO)
+	rox := slices.Concat(defaultsROX, cfg.ROX)
+	rw := slices.Concat([]string(nil), cfg.RW)
+	rwx := slices.Concat(defaultsRWX, cfg.RWX)
 
 	roAcc := ll.AccessFSReadFile | ll.AccessFSReadDir
 	roxAcc := roAcc | ll.AccessFSExecute

@@ -19,10 +19,42 @@
 - Vet: `go vet ./...`
 - Tests: `go test ./...` (none yet; add `_test.go` alongside code)
 
-Requirements: Go 1.21+, Linux kernel with Landlock support, Arch tools (`makepkg`, `pacman`, `vercmp`, `tar`, `git`, `shellcheck`, `namcap`).
+Requirements: Go 1.24+, Linux kernel with Landlock support, Arch tools (`makepkg`, `pacman`, `vercmp`, `tar`, `git`, `shellcheck`, `namcap`).
+
+## Workspaces (go work) and Local Replacements
+
+This repo prefers using Go workspaces for local overrides instead of editing `go.mod` replaces. This is especially helpful when operating in restricted or offline environments.
+
+Recommended setup (no network):
+
+- Initialize workspace in the repo root: `go work init .`
+- Add the local Landlock stub module: `go work use ./third_party/go-landlock`
+- Ensure the stub’s module path matches upstream (`module github.com/landlock-lsm/go-landlock`).
+- Do NOT add `replace` lines to `go.mod`. The workspace will satisfy the dependency.
+
+Resulting `go.work` (example):
+
+```
+go 1.24
+
+use (
+    .
+    ./third_party/go-landlock
+)
+```
+
+Toggling between stub and upstream:
+
+- Use stub (offline): keep the `go.work` above and build normally.
+- Use upstream (online): either remove `./third_party/go-landlock` from `go.work` or set `GOWORK=off` when building to ignore the workspace, then run `go mod tidy` as needed.
+
+Notes:
+
+- `go.work` affects local development only and is not published. CI can set `GOWORK=off` to ensure `go.mod` integrity.
+- If you need a one-off mapping, you can also run: `go work edit -use ./third_party/go-landlock`.
 
 ## Coding Style & Naming Conventions
-- Use standard Go style; run `go fmt` before pushing. Tabs/indentation as produced by gofmt.
+- Use standard Go style; run `go fmt` before pushing and after implementing large changes. Tabs/indentation as produced by gofmt.
 - Package names: short, lower-case; exported identifiers use `PascalCase`.
 - Errors: return `error`; messages start lower-case, no trailing punctuation.
 - Files mirror package domain (e.g., `aur/aur.go`, `pacman/pacman.go`).
