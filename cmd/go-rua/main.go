@@ -106,6 +106,7 @@ func builddirCmd(args []string) {
 	fs.Usage = builddirUsage
 	offline := fs.Bool("offline", false, "Forbid internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
+	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
 	if err := fs.Parse(args); err != nil {
 		return
 	}
@@ -120,12 +121,14 @@ func builddirCmd(args []string) {
 	}
 
 	p := paths.MustInit()
-	if err := build.BuildDirectory(abs, p, *offline, *force); err != nil {
+	if err := build.BuildDirectory(abs, p, *offline, *force, !*noSeccomp); err != nil {
 		fatalf("build failed: %v", err)
 	}
 }
 
-func builddirUsage() { fmt.Println("Usage: go-rua builddir [--offline] [--force] [dir]") }
+func builddirUsage() {
+	fmt.Println("Usage: go-rua builddir [--offline] [--force] [--no-seccomp] [dir]")
+}
 
 func shellcheckCmd(args []string) {
 	fs := flag.NewFlagSet("shellcheck", flag.ContinueOnError)
@@ -189,6 +192,7 @@ func installCmd(args []string) {
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	planOnly := fs.Bool("plan", false, "Print build plan and exit")
 	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
+	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
 	installBuilt := fs.Bool("install", false, "Install built artifacts after staging")
 	if err := fs.Parse(args); err != nil {
 		return
@@ -251,20 +255,21 @@ func installCmd(args []string) {
 		}
 	}
 	if err := (func() error {
-		return install.Install(pkgs, p, install.Options{Offline: *offline, Force: *force, InstallBuilt: *installBuilt})
+		return install.Install(pkgs, p, install.Options{Offline: *offline, Force: *force, InstallBuilt: *installBuilt, DisableSeccomp: *noSeccomp})
 	})(); err != nil {
 		fatalf("install failed: %v", err)
 	}
 }
 
 func installUsage() {
-	fmt.Println("Usage: go-rua install [--offline] [--force] [--install] [--plan] [--install-repo-deps] <pkgs...>")
+	fmt.Println("Usage: go-rua install [--offline] [--force] [--install] [--plan] [--install-repo-deps] [--no-seccomp] <pkgs...>")
 	fmt.Println("Options:")
 	fmt.Println("  --offline             Forbid internet access while building")
 	fmt.Println("  --force               Pass --force to makepkg")
 	fmt.Println("  --install             Install built artifacts after staging")
 	fmt.Println("  --plan                Print build plan and exit")
 	fmt.Println("  --install-repo-deps   Install missing repo deps with pacman")
+	fmt.Println("  --no-seccomp          Disable seccomp denylist for build (debug)")
 }
 
 func searchCmd(args []string) {
@@ -322,6 +327,7 @@ func upgradeCmd(args []string) {
 	offline := fs.Bool("offline", false, "Forbid internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
+	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
 	if err := fs.Parse(args); err != nil {
 		return
 	}
@@ -375,14 +381,14 @@ func upgradeCmd(args []string) {
 	p := paths.MustInit()
 	for _, name := range plan.BuildOrder {
 		fmt.Printf("\n==> Upgrading AUR pkg: %s\n", name)
-		if err := install.Install([]string{name}, p, install.Options{Offline: *offline, Force: *force, NonInteractive: true, InstallBuilt: true}); err != nil {
+		if err := install.Install([]string{name}, p, install.Options{Offline: *offline, Force: *force, NonInteractive: true, InstallBuilt: true, DisableSeccomp: *noSeccomp}); err != nil {
 			fatalf("upgrade failed for %s: %v", name, err)
 		}
 	}
 }
 
 func upgradeUsage() {
-	fmt.Println("Usage: go-rua upgrade [--printonly|--apply] [--offline] [--force] [--install-repo-deps]")
+	fmt.Println("Usage: go-rua upgrade [--printonly|--apply] [--offline] [--force] [--install-repo-deps] [--no-seccomp]")
 }
 
 func fatalf(format string, a ...any) {

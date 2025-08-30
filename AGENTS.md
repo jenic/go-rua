@@ -54,10 +54,11 @@ Notes:
 - If you need a one-off mapping, you can also run: `go work edit -use ./third_party/go-landlock`.
 
 ## Coding Style & Naming Conventions
-- Use standard Go style; run `go fmt` before pushing and after implementing large changes. Tabs/indentation as produced by gofmt.
+- Use standard Go style; run `go fmt` before pushing changes. Tabs/indentation as produced by gofmt.
 - Package names: short, lower-case; exported identifiers use `PascalCase`.
 - Errors: return `error`; messages start lower-case, no trailing punctuation.
 - Files mirror package domain (e.g., `aur/aur.go`, `pacman/pacman.go`).
+- Always run `go fmt` after making changes.
 
 ## Testing Guidelines
 - Place tests next to code in `*_test.go` using `testing` and subtests.

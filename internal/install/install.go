@@ -25,6 +25,8 @@ type Options struct {
 	NonInteractive bool
 	// InstallBuilt installs built artifacts with pacman -U after staging
 	InstallBuilt bool
+	// DisableSeccomp disables applying seccomp denylist during build
+	DisableSeccomp bool
 }
 
 // Install clones AUR repos for packages, offers a simple review shell, builds and stages artifacts
@@ -107,7 +109,7 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 		_ = os.RemoveAll(filepath.Join(buildDir, ".git"))
 
 		// build
-		if err := build.BuildDirectory(buildDir, p, opt.Offline, opt.Force); err != nil {
+		if err := build.BuildDirectory(buildDir, p, opt.Offline, opt.Force, !opt.DisableSeccomp); err != nil {
 			return err
 		}
 

@@ -11,8 +11,9 @@ import (
 	"go-rua/internal/sandbox"
 )
 
-// BuildDirectory builds a PKGBUILD directory using a Landlock sandbox
-func BuildDirectory(dir string, p paths.Paths, offline, force bool) error {
+// BuildDirectory builds a PKGBUILD directory using a Landlock/bwrap sandbox.
+// If seccomp is false, the seccomp denylist is not applied.
+func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool) error {
 	if _, err := os.Stat(filepath.Join(dir, "PKGBUILD")); err != nil {
 		return fmt.Errorf("PKGBUILD not found in %s: %w", dir, err)
 	}
@@ -59,15 +60,15 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool) error {
 			useBwrap = true
 		}
 	}
-    cfg := sandbox.Config{
-        RO:              ro,
-        ROX:             rox,
-        RWX:             rwx,
-        Env:             envs,
-        UnrestrictedNet: !offline,
-        UseBubblewrap:   useBwrap,
-        SeccompDenylist: true,
-    }
+	cfg := sandbox.Config{
+		RO:              ro,
+		ROX:             rox,
+		RWX:             rwx,
+		Env:             envs,
+		UnrestrictedNet: !offline,
+		UseBubblewrap:   useBwrap,
+		SeccompDenylist: seccomp,
+	}
 	return sandbox.Run(cfg, args)
 }
 

@@ -9,16 +9,16 @@ import (
 
 // Config describes sandbox parameters we care about
 type Config struct {
-    RO              []string // read-only
-    ROX             []string // read-only with exec
-    RW              []string // read-write
-    RWX             []string // read-write with exec
-    Env             []string // env var pass-through (KEY or KEY=VALUE)
-    BestEffort      bool
-    UnrestrictedFS  bool
-    UnrestrictedNet bool // best-effort; may not be enforced by Landlock
-    UseBubblewrap   bool // when true and UnrestrictedNet=false, prefer bwrap --unshare-net
-    SeccompDenylist bool // apply a minimal seccomp denylist to the target process
+	RO              []string // read-only
+	ROX             []string // read-only with exec
+	RW              []string // read-write
+	RWX             []string // read-write with exec
+	Env             []string // env var pass-through (KEY or KEY=VALUE)
+	BestEffort      bool
+	UnrestrictedFS  bool
+	UnrestrictedNet bool // best-effort; may not be enforced by Landlock
+	UseBubblewrap   bool // when true and UnrestrictedNet=false, prefer bwrap --unshare-net
+	SeccompDenylist bool // apply a minimal seccomp denylist to the target process
 }
 
 // Run executes a command inside a Landlock sandbox via our embedded runner
