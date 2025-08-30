@@ -121,14 +121,18 @@ func applyLandlock(cfg struct {
 
 	// Default allowances similar to a typical baseline
 	// Allow read-only access to system dirs and devices
-	defaultsRO := []string{"/etc", "/proc", "/sys", "/dev"}
-	defaultsROX := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
-	defaultsRWX := []string{"/tmp"}
+    defaultsRO := []string{"/etc", "/proc", "/sys"}
+    // Exec allowed from standard system locations
+    defaultsROX := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
+    // Writable temp areas commonly used by build tools
+    defaultsRWX := []string{"/tmp", "/var/tmp"}
+    // Device nodes that often need write access (tty, null) and pseudo terminals/shm
+    defaultsRW := []string{"/dev/null", "/dev/tty", "/dev/pts", "/dev/shm"}
 
 	// Merge defaults with user-provided (Go 1.22+)
 	ro := slices.Concat(defaultsRO, cfg.RO)
 	rox := slices.Concat(defaultsROX, cfg.ROX)
-	rw := slices.Concat([]string(nil), cfg.RW)
+    rw := slices.Concat(defaultsRW, cfg.RW)
 	rwx := slices.Concat(defaultsRWX, cfg.RWX)
 
 	roAcc := ll.AccessFSReadFile | ll.AccessFSReadDir
