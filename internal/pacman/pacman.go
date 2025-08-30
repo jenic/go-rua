@@ -122,3 +122,16 @@ func InstallRepoDeps(names []string) error {
     cmd.Stderr = os.Stderr
     return cmd.Run()
 }
+
+// InstallLocal installs local package files using `sudo pacman -U --needed` interactively.
+func InstallLocal(files []string) error {
+    if len(files) == 0 {
+        return nil
+    }
+    args := append([]string{"pacman", "-U", "--needed"}, files...)
+    cmd := exec.Command("sudo", args...)
+    cmd.Stdin = os.Stdin
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
+    return cmd.Run()
+}

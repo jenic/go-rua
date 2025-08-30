@@ -12,6 +12,7 @@ import (
 
 	"go-rua/internal/aur"
 	"go-rua/internal/build"
+	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
 	"go-rua/internal/shellutil"
 	"go-rua/internal/tarcheck"
@@ -20,6 +21,10 @@ import (
 type Options struct {
 	Offline bool
 	Force   bool
+	// NonInteractive skips the interactive review shell/diff steps
+	NonInteractive bool
+	// InstallBuilt installs built artifacts with pacman -U after staging
+	InstallBuilt bool
 }
 
 // Install clones AUR repos for packages, offers a simple review shell, builds and stages artifacts
@@ -59,27 +64,33 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 			_ = runC(reviewDir, "git", "reset", "--hard", "origin/master")
 		}
 
-		// Simple review prompt
-		fmt.Printf("\nReviewing %s at %s\n", pkgbase, reviewDir)
-		reader := bufio.NewReader(os.Stdin)
-		for {
-			fmt.Print("[S]=shellcheck, [N]=namcap, [T]=shell, [D]=git diff, [O]=ok continue: ")
-			text, _ := reader.ReadString('\n')
-			text = strings.ToLower(strings.TrimSpace(text))
-			switch text {
-			case "s":
-				_ = shellcheck(reviewDir)
-			case "n":
-				_ = namcap(reviewDir)
-			case "t":
-				// open sandboxed shell for user edits
-				fmt.Println("Exit the shell with Ctrl-D...")
-				_ = build.RunShell(reviewDir)
-			case "d":
-				_ = runC(reviewDir, "git", "--no-pager", "diff")
-			case "o":
-				goto BUILD
+		// Simple review prompt (skipped when NonInteractive)
+		if !opt.NonInteractive {
+			fmt.Printf("\nReviewing %s at %s\n", pkgbase, reviewDir)
+			reader := bufio.NewReader(os.Stdin)
+			for {
+				fmt.Print("[S]=shellcheck, [N]=namcap, [T]=shell, [D]=git diff, [O]=ok continue: ")
+				text, _ := reader.ReadString('\n')
+				text = strings.ToLower(strings.TrimSpace(text))
+				switch text {
+				case "s":
+					_ = shellcheck(reviewDir)
+				case "n":
+					_ = namcap(reviewDir)
+				case "t":
+					// open sandboxed shell for user edits
+					fmt.Println("Exit the shell with Ctrl-D...")
+					_ = build.RunShell(reviewDir)
+				case "d":
+					_ = runC(reviewDir, "git", "--no-pager", "diff")
+				case "o":
+					goto BUILD
+				}
 			}
+		}
+		// non-interactive goes straight to BUILD
+		if opt.NonInteractive {
+			goto BUILD
 		}
 
 	BUILD:
@@ -119,18 +130,29 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 
 		// move to checked_tars
 		dstDir := p.CheckedTarsDir(pkgbase)
+		staged := make([]string, 0, len(tars))
 		for _, t := range tars {
 			base := filepath.Base(t)
-			if err := moveCrossDevice(t, filepath.Join(dstDir, base)); err != nil {
+			dst := filepath.Join(dstDir, base)
+			if err := moveCrossDevice(t, dst); err != nil {
 				return err
 			}
+			staged = append(staged, dst)
 			// move signature if present
 			sigSrc := t + ".sig"
 			if _, err := os.Stat(sigSrc); err == nil {
-				_ = moveCrossDevice(sigSrc, filepath.Join(dstDir, base+".sig"))
+				_ = moveCrossDevice(sigSrc, dst+".sig")
 			}
 		}
 		fmt.Printf("Artifacts staged at %s\n", dstDir)
+
+		// optional install of staged artifacts
+		if opt.InstallBuilt && len(staged) > 0 {
+			fmt.Println("Installing built artifacts via pacman -U ...")
+			if err := pacman.InstallLocal(staged); err != nil {
+				return fmt.Errorf("pacman -U failed: %w", err)
+			}
+		}
 	}
 	return nil
 }
