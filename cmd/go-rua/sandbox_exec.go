@@ -1,37 +1,37 @@
 package main
 
 import (
-    "encoding/json"
-    "fmt"
-    "os"
-    "os/exec"
-    "path/filepath"
-    "slices"
-    "strings"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
 
-ll "github.com/landlock-lsm/go-landlock/landlock"
+	ll "github.com/landlock-lsm/go-landlock/landlock"
 )
 
 // seams for testing
 var (
-    syscallExecFn           = syscallExec
-    applySeccompDenylistFn  = applySeccompDenylist
-    applyLandlockFn         = applyLandlock
-    prSetNoNewPrivsFn       = prSetNoNewPrivs
-    lookPathFn              = exec.LookPath
-    absPathFn               = filepath.Abs
-    osExitFn                = os.Exit
+	syscallExecFn          = syscallExec
+	applySeccompDenylistFn = applySeccompDenylist
+	applyLandlockFn        = applyLandlock
+	prSetNoNewPrivsFn      = prSetNoNewPrivs
+	lookPathFn             = exec.LookPath
+	absPathFn              = filepath.Abs
+	osExitFn               = os.Exit
 )
 
 // sandboxExec is invoked as a hidden subcommand: go-rua sandbox-exec <cmd> [args...]
 // It applies a Landlock ruleset (based on RUA_SANDBOX_CFG) and then execs the target.
 func sandboxExec() {
 	// Parse config from env
-    cfgJSON := os.Getenv("RUA_SANDBOX_CFG")
-    if cfgJSON == "" {
-        fmt.Fprintln(os.Stderr, "sandbox-exec: missing RUA_SANDBOX_CFG")
-        osExitFn(97)
-    }
+	cfgJSON := os.Getenv("RUA_SANDBOX_CFG")
+	if cfgJSON == "" {
+		fmt.Fprintln(os.Stderr, "sandbox-exec: missing RUA_SANDBOX_CFG")
+		osExitFn(97)
+	}
 	var cfg struct {
 		RO              []string
 		ROX             []string
@@ -44,75 +44,75 @@ func sandboxExec() {
 		UseBubblewrap   bool
 		SeccompDenylist bool
 	}
-    if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
-        fmt.Fprintln(os.Stderr, "sandbox-exec: invalid config:", err)
-        osExitFn(98)
-    }
+	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
+		fmt.Fprintln(os.Stderr, "sandbox-exec: invalid config:", err)
+		osExitFn(98)
+	}
 
 	args := os.Args[2:]
-    if len(args) == 0 {
-        fmt.Fprintln(os.Stderr, "sandbox-exec: no command provided")
-        osExitFn(99)
-    }
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "sandbox-exec: no command provided")
+		osExitFn(99)
+	}
 
 	// If this invocation is seccomp-only (launched inside bwrap), apply seccomp and exec target.
-    if os.Getenv("RUA_SECCOMP_ONLY") == "1" {
-        if cfg.SeccompDenylist {
-            if err := applySeccompDenylistFn(); err != nil {
-                if cfg.BestEffort {
-                    fmt.Fprintln(os.Stderr, "warning: failed to apply seccomp (best-effort):", err)
-                } else {
-                    fmt.Fprintln(os.Stderr, "sandbox-exec: failed to apply seccomp:", err)
-                    osExitFn(102)
-                }
-            }
-        }
-        childEnv := buildEnv(cfg.Env)
-        prog := args[0]
-        if !strings.Contains(prog, "/") {
-            var pathVal string
-            for _, e := range childEnv {
-                if strings.HasPrefix(e, "PATH=") {
-                    pathVal = strings.TrimPrefix(e, "PATH=")
-                }
-            }
-            if pathVal == "" {
-                pathVal = "/usr/bin:/bin"
-            }
-            _ = os.Setenv("PATH", pathVal)
-            if p, err := lookPathFn(prog); err == nil {
-                prog = p
-            }
-        } else if !strings.HasPrefix(prog, "/") {
-            if ap, err := absPathFn(prog); err == nil {
-                prog = ap
-            }
-        }
-        if err := syscallExecFn(prog, append([]string{prog}, args[1:]...), childEnv); err != nil {
-            fmt.Fprintln(os.Stderr, "exec failed:", err)
-            osExitFn(101)
-        }
-        return
-    }
+	if os.Getenv("RUA_SECCOMP_ONLY") == "1" {
+		if cfg.SeccompDenylist {
+			if err := applySeccompDenylistFn(); err != nil {
+				if cfg.BestEffort {
+					fmt.Fprintln(os.Stderr, "warning: failed to apply seccomp (best-effort):", err)
+				} else {
+					fmt.Fprintln(os.Stderr, "sandbox-exec: failed to apply seccomp:", err)
+					osExitFn(102)
+				}
+			}
+		}
+		childEnv := buildEnv(cfg.Env)
+		prog := args[0]
+		if !strings.Contains(prog, "/") {
+			var pathVal string
+			for _, e := range childEnv {
+				if strings.HasPrefix(e, "PATH=") {
+					pathVal = strings.TrimPrefix(e, "PATH=")
+				}
+			}
+			if pathVal == "" {
+				pathVal = "/usr/bin:/bin"
+			}
+			_ = os.Setenv("PATH", pathVal)
+			if p, err := lookPathFn(prog); err == nil {
+				prog = p
+			}
+		} else if !strings.HasPrefix(prog, "/") {
+			if ap, err := absPathFn(prog); err == nil {
+				prog = ap
+			}
+		}
+		if err := syscallExecFn(prog, append([]string{prog}, args[1:]...), childEnv); err != nil {
+			fmt.Fprintln(os.Stderr, "exec failed:", err)
+			osExitFn(101)
+		}
+		return
+	}
 
 	// Decide execution strategy: bubblewrap for net isolation if requested/available, else Landlock-only.
 	useBwrap := false
-    if cfg.UseBubblewrap {
-        if _, err := lookPathFn("bwrap"); err == nil {
-            useBwrap = true
-        }
-    }
+	if cfg.UseBubblewrap {
+		if _, err := lookPathFn("bwrap"); err == nil {
+			useBwrap = true
+		}
+	}
 	// Apply Landlock only when not using bubblewrap (to avoid interfering with bwrap mounts)
-    if !useBwrap && !cfg.UnrestrictedFS {
-        if err := applyLandlockFn(cfg); err != nil {
-            if cfg.BestEffort {
-                fmt.Fprintln(os.Stderr, "warning: failed to apply Landlock (best-effort):", err)
-            } else {
-                fmt.Fprintln(os.Stderr, "sandbox-exec: failed to apply Landlock:", err)
-                osExitFn(100)
-            }
-        }
-    }
+	if !useBwrap && !cfg.UnrestrictedFS {
+		if err := applyLandlockFn(cfg); err != nil {
+			if cfg.BestEffort {
+				fmt.Fprintln(os.Stderr, "warning: failed to apply Landlock (best-effort):", err)
+			} else {
+				fmt.Fprintln(os.Stderr, "sandbox-exec: failed to apply Landlock:", err)
+				osExitFn(100)
+			}
+		}
+	}
 
 	// Build sanitized environment for the target
 	childEnv := buildEnv(cfg.Env)
@@ -145,7 +145,7 @@ func sandboxExec() {
 
 	// Best-effort: prevent gaining privileges in the child
 	// no_new_privs prevents gaining privileges; ignore error on older kernels
-    _ = prSetNoNewPrivsFn()
+	_ = prSetNoNewPrivsFn()
 
 	// Optionally wrap with bubblewrap for network isolation
 	if useBwrap {
@@ -177,29 +177,29 @@ func sandboxExec() {
 		bwargs = append(bwargs, args...)
 		// Signal to inner invocation to only apply seccomp
 		childEnv = append(childEnv, "RUA_SECCOMP_ONLY=1")
-        if err := syscallExecFn(bwargs[0], bwargs, childEnv); err != nil {
-            fmt.Fprintln(os.Stderr, "exec failed:", err)
-            osExitFn(101)
-        }
-        return
-    }
+		if err := syscallExecFn(bwargs[0], bwargs, childEnv); err != nil {
+			fmt.Fprintln(os.Stderr, "exec failed:", err)
+			osExitFn(101)
+		}
+		return
+	}
 
 	// Apply seccomp denylist if requested (no bwrap path)
-    if cfg.SeccompDenylist {
-        if err := applySeccompDenylistFn(); err != nil {
-            if cfg.BestEffort {
-                fmt.Fprintln(os.Stderr, "warning: failed to apply seccomp (best-effort):", err)
-            } else {
-                fmt.Fprintln(os.Stderr, "sandbox-exec: failed to apply seccomp:", err)
-                osExitFn(102)
-            }
-        }
-    }
+	if cfg.SeccompDenylist {
+		if err := applySeccompDenylistFn(); err != nil {
+			if cfg.BestEffort {
+				fmt.Fprintln(os.Stderr, "warning: failed to apply seccomp (best-effort):", err)
+			} else {
+				fmt.Fprintln(os.Stderr, "sandbox-exec: failed to apply seccomp:", err)
+				osExitFn(102)
+			}
+		}
+	}
 	// Replace our process image with the target (no bwrap)
-    if err := syscallExecFn(prog, append([]string{prog}, args[1:]...), childEnv); err != nil {
-        fmt.Fprintln(os.Stderr, "exec failed:", err)
-        osExitFn(101)
-    }
+	if err := syscallExecFn(prog, append([]string{prog}, args[1:]...), childEnv); err != nil {
+		fmt.Fprintln(os.Stderr, "exec failed:", err)
+		osExitFn(101)
+	}
 }
 
 // applyLandlock constructs and installs a Landlock ruleset based on cfg.
