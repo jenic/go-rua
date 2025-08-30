@@ -1,10 +1,11 @@
 package pacman
 
 import (
-	"bufio"
-	"fmt"
-	"os/exec"
-	"strings"
+    "bufio"
+    "fmt"
+    "os"
+    "os/exec"
+    "strings"
 )
 
 type ForeignPkg struct {
@@ -107,4 +108,17 @@ func IsRepoPackage(name string) (bool, error) {
         return false, fmt.Errorf("pacman -Si failed: %w", err)
     }
     return true, nil
+}
+
+// InstallRepoDeps runs `sudo pacman -S --needed ...` for the given names.
+func InstallRepoDeps(names []string) error {
+    if len(names) == 0 {
+        return nil
+    }
+    args := append([]string{"pacman", "-S", "--needed"}, names...)
+    cmd := exec.Command("sudo", args...)
+    cmd.Stdin = os.Stdin
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
+    return cmd.Run()
 }

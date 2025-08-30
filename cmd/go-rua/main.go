@@ -142,6 +142,7 @@ func installCmd(args []string) {
     offline := fs.Bool("offline", false, "Forbid internet access while building")
     force := fs.Bool("force", false, "Pass --force to makepkg")
     planOnly := fs.Bool("plan", false, "Print build plan and exit")
+    installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
     _ = fs.Parse(args)
     pkgs := fs.Args()
     if len(pkgs) == 0 {
@@ -184,6 +185,19 @@ func installCmd(args []string) {
     if infos, err := aur.Info(pkgs); err == nil {
         if sum, err := install.SummarizeForAUR(pkgs, infos); err == nil {
             fmt.Print(install.FormatSummary(sum))
+        }
+    }
+    // Optionally install missing repo deps
+    if *installRepoDeps {
+        plan, err := install.BuildPlan(pkgs)
+        if err != nil {
+            fatalf("plan failed: %v", err)
+        }
+        if len(plan.RepoMissing) > 0 {
+            fmt.Printf("Installing missing repo deps: %s\n", strings.Join(plan.RepoMissing, ", "))
+            if err := pacman.InstallRepoDeps(plan.RepoMissing); err != nil {
+                fatalf("pacman install failed: %v", err)
+            }
         }
     }
     if err := (func() error {
