@@ -3,6 +3,7 @@ package tarcheck
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -40,7 +41,7 @@ func TarCheck(archivePath string) error {
 	}
 
 	// UI loop
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReader(getInput())
 	fmt.Printf("Package %s has %d files; %d exec; %d SUID.\n", filepath.Base(archivePath), len(all), len(execs), len(suids))
 	for {
 		if len(suids) == 0 {
@@ -99,6 +100,19 @@ func TarCheck(archivePath string) error {
 		}
 	}
 }
+
+var inputOverride io.Reader
+
+// getInput returns stdin unless overridden by tests.
+func getInput() io.Reader {
+	if inputOverride != nil {
+		return inputOverride
+	}
+	return os.Stdin
+}
+
+// SetInputForTests allows tests to feed scripted input to TarCheck.
+func SetInputForTests(r io.Reader) { inputOverride = r }
 
 func listArchive(path string) ([]entry, string, error) {
 	// Use tar -tvf to list with modes via sandbox (RO on archive dir)

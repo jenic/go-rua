@@ -21,6 +21,9 @@ type Config struct {
 	SeccompDenylist bool // apply a minimal seccomp denylist to the target process
 }
 
+// execCommandHook allows tests to override process spawning.
+var execCommandHook = exec.Command
+
 // Run executes a command inside a Landlock sandbox via our embedded runner
 func Run(cfg Config, argv []string) error {
 	if len(argv) == 0 {
@@ -32,7 +35,7 @@ func Run(cfg Config, argv []string) error {
 	}
 	// Re-enter our own binary with the hidden subcommand "sandbox-exec"
 	self := os.Args[0]
-	cmd := exec.Command(self, append([]string{"sandbox-exec"}, argv...)...)
+	cmd := execCommandHook(self, append([]string{"sandbox-exec"}, argv...)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -51,11 +54,16 @@ func RunCapture(cfg Config, argv []string) (string, string, error) {
 		return "", "", err
 	}
 	self := os.Args[0]
-	cmd := exec.Command(self, append([]string{"sandbox-exec"}, argv...)...)
+	cmd := execCommandHook(self, append([]string{"sandbox-exec"}, argv...)...)
 	cmd.Env = append([]string{}, "RUA_SANDBOX_CFG="+string(payload))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), "", err
 	}
 	return string(out), "", nil
+}
+
+// SetExecCommandForTests overrides the command runner in tests.
+func SetExecCommandForTests(fn func(name string, arg ...string) *exec.Cmd) {
+	execCommandHook = fn
 }

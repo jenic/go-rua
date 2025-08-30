@@ -15,14 +15,20 @@ type Paths struct {
 	DataCheckedTars string // ~/.local/share/rua/checked_tars
 }
 
+// allow tests to stub the makepkg presence check
+var makepkgCheck = func() error { _, err := os.Stat("/usr/bin/makepkg"); return err }
+
 // MustInit prepares directories and returns paths. It also checks that makepkg exists.
 func MustInit() Paths {
 	p := MustInitNoMakepkgChecks()
-	if _, err := os.Stat("/usr/bin/makepkg"); err != nil {
+	if err := makepkgCheck(); err != nil {
 		fatalf("makepkg not found: %v", err)
 	}
 	return p
 }
+
+// SetMakepkgCheckForTests overrides the makepkg existence check.
+func SetMakepkgCheckForTests(fn func() error) { makepkgCheck = fn }
 
 // MustInitNoMakepkgChecks prepares directories and returns paths without makepkg checks.
 func MustInitNoMakepkgChecks() Paths {

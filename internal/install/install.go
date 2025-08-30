@@ -32,6 +32,17 @@ type Options struct {
 	AsDeps bool
 }
 
+// test seams for external interactions
+var (
+	runFn                      = run
+	runCFn                     = runC
+	runCQFn                    = runCQ
+	runShell                   = build.RunShell
+	buildDirectoryFn           = build.BuildDirectory
+	tarCheck                   = tarcheck.TarCheck
+	pacmanInstallLocalWithMode = pacman.InstallLocalWithMode
+)
+
 // Install clones AUR repos for packages, offers a simple review shell, builds and stages artifacts
 func Install(pkgs []string, p paths.Paths, opt Options) error {
 	if len(pkgs) == 0 {
@@ -102,15 +113,15 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 			reviewDir := p.ReviewDir(pkgbase)
 			if _, err := os.Stat(filepath.Join(reviewDir, ".git")); err != nil {
 				repo := fmt.Sprintf("https://aur.archlinux.org/%s.git", pkgbase)
-				if err := run("git", "clone", repo, reviewDir); err != nil {
+				if err := runFn("git", "clone", repo, reviewDir); err != nil {
 					return fmt.Errorf("git clone failed: %w", err)
 				}
-				_ = runC(reviewDir, "git", "checkout", "master")
+				_ = runCFn(reviewDir, "git", "checkout", "master")
 			} else {
-				if err := runC(reviewDir, "git", "fetch", "--all", "-p"); err != nil {
+				if err := runCFn(reviewDir, "git", "fetch", "--all", "-p"); err != nil {
 					return err
 				}
-				_ = runC(reviewDir, "git", "checkout", "master")
+				_ = runCFn(reviewDir, "git", "checkout", "master")
 			}
 
 			if !opt.NonInteractive {
@@ -118,8 +129,8 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 				reader := bufio.NewReader(os.Stdin)
 				for {
 					// Determine upstream merge status
-					merged := (runCQ(reviewDir, "git", "merge-base", "--is-ancestor", "origin/master", "HEAD") == nil)
-					identical := (runCQ(reviewDir, "git", "diff", "--quiet", "origin/master") == nil)
+					merged := (runCQFn(reviewDir, "git", "merge-base", "--is-ancestor", "origin/master", "HEAD") == nil)
+					identical := (runCQFn(reviewDir, "git", "diff", "--quiet", "origin/master") == nil)
 					if merged {
 						fmt.Print("[S]=shellcheck, [N]=namcap, [T]=shell, ")
 						if identical {
@@ -144,17 +155,17 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 						}
 					case "t":
 						fmt.Println("Exit the shell with Ctrl-D...")
-						_ = build.RunShell(reviewDir)
+						_ = runShell(reviewDir)
 					case "d":
 						if merged {
-							_ = runC(reviewDir, "git", "--no-pager", "diff", "origin/master..HEAD")
+							_ = runCFn(reviewDir, "git", "--no-pager", "diff", "origin/master..HEAD")
 						} else {
-							_ = runC(reviewDir, "git", "--no-pager", "diff", "HEAD..origin/master")
+							_ = runCFn(reviewDir, "git", "--no-pager", "diff", "HEAD..origin/master")
 						}
 					case "m":
 						if !merged {
 							// Attempt a non-fast-forward merge of upstream
-							if err := runC(reviewDir, "git", "merge", "--no-edit", "origin/master"); err != nil {
+							if err := runCFn(reviewDir, "git", "merge", "--no-edit", "origin/master"); err != nil {
 								fmt.Println("Merge failed. Resolve conflicts in the shell and try again.")
 							}
 						}
@@ -169,24 +180,24 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 				goto BUILD
 			}
 		BUILD:
-			buildDir := p.BuildDir(pkgbase)
-			_ = os.RemoveAll(buildDir)
-			if err := os.MkdirAll(buildDir, 0o755); err != nil {
+			buildDirPath := p.BuildDir(pkgbase)
+			_ = os.RemoveAll(buildDirPath)
+			if err := os.MkdirAll(buildDirPath, 0o755); err != nil {
 				return err
 			}
-			if err := build.CopyTree(reviewDir, buildDir); err != nil {
+			if err := build.CopyTree(reviewDir, buildDirPath); err != nil {
 				return err
 			}
-			_ = os.RemoveAll(filepath.Join(buildDir, ".git"))
-			if err := build.BuildDirectory(buildDir, p, opt.Offline, opt.Force, !opt.DisableSeccomp); err != nil {
+			_ = os.RemoveAll(filepath.Join(buildDirPath, ".git"))
+			if err := buildDirectoryFn(buildDirPath, p, opt.Offline, opt.Force, !opt.DisableSeccomp); err != nil {
 				return err
 			}
-			files, _ := os.ReadDir(buildDir)
+			files, _ := os.ReadDir(buildDirPath)
 			var tars []string
 			for _, f := range files {
 				name := f.Name()
 				if strings.HasSuffix(name, ".pkg.tar") || strings.HasSuffix(name, ".pkg.tar.xz") || strings.HasSuffix(name, ".pkg.tar.gz") || strings.HasSuffix(name, ".pkg.tar.zst") {
-					tars = append(tars, filepath.Join(buildDir, name))
+					tars = append(tars, filepath.Join(buildDirPath, name))
 				}
 			}
 			// Filter artifacts by expected split package names for this pkgbase+depth
@@ -200,7 +211,7 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 				tars = filterArtifactsByWhitelist(tars, whitelist)
 			}
 			for _, t := range tars {
-				if err := tarcheck.TarCheck(t); err != nil {
+				if err := tarCheck(t); err != nil {
 					return err
 				}
 			}
@@ -223,7 +234,7 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 		if opt.InstallBuilt && len(groupStaged) > 0 {
 			asdeps := opt.AsDeps || depth > 0
 			fmt.Printf("Installing %d artifact(s) via pacman -U (asdeps=%v) ...\n", len(groupStaged), asdeps)
-			if err := pacman.InstallLocalWithMode(groupStaged, asdeps); err != nil {
+			if err := pacmanInstallLocalWithMode(groupStaged, asdeps); err != nil {
 				return fmt.Errorf("pacman -U failed: %w", err)
 			}
 		}

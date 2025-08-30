@@ -91,3 +91,10 @@ func TestFormatSummary(t *testing.T) {
 		t.Fatalf("summary format missing fields: %q", out)
 	}
 }
+
+func TestDedupCopy(t *testing.T) {
+	got := dedupCopy([]string{"a", "b", "a", "c", "b"})
+	if len(got) != 3 {
+		t.Fatalf("dedupCopy unexpected: %v", got)
+	}
+}

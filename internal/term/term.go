@@ -5,13 +5,8 @@ import (
 	"strings"
 )
 
-// Enabled reports whether colored output should be used.
-// Rules:
-// - RUA_COLOR=always|never|auto overrides.
-// - NO_COLOR disables when set to any value.
-// - CLICOLOR=0 disables; CLICOLOR_FORCE=1 forces.
-// - Defaults to auto (enabled when stdout is a TTY is ideal, but we keep it on by default here).
-var enabled = func() bool {
+// computeEnabled contains the logic for determining color enablement.
+func computeEnabled() bool {
 	if v := strings.ToLower(os.Getenv("RUA_COLOR")); v != "" {
 		switch v {
 		case "always":
@@ -32,9 +27,14 @@ var enabled = func() bool {
 	}
 	// default: enabled
 	return true
-}()
+}
+
+var enabled = computeEnabled()
 
 func Enabled() bool { return enabled }
+
+// RecomputeForTests recalculates enablement using current env (testing helper).
+func RecomputeForTests() { enabled = computeEnabled() }
 
 func wrap(code, s string) string {
 	if !enabled || s == "" {
