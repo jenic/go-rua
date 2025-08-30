@@ -66,7 +66,7 @@ func main() {
 	case "upgrade":
 		upgradeCmd(os.Args[2:])
 	case "help", "-h", "--help":
-		usage()
+		helpCmd(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		usage()
@@ -74,11 +74,41 @@ func main() {
 	}
 }
 
+func helpCmd(args []string) {
+	if len(args) == 0 {
+		usage()
+		return
+	}
+	switch args[0] {
+	case "builddir":
+		builddirUsage()
+	case "shellcheck":
+		shellcheckUsage()
+	case "namcap":
+		namcapUsage()
+	case "install":
+		installUsage()
+	case "search":
+		searchUsage()
+	case "info":
+		infoUsage()
+	case "upgrade":
+		upgradeUsage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown help topic: %s\n\n", args[0])
+		usage()
+	}
+}
+
 func builddirCmd(args []string) {
-	fs := flag.NewFlagSet("builddir", flag.ExitOnError)
+	fs := flag.NewFlagSet("builddir", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = builddirUsage
 	offline := fs.Bool("offline", false, "Forbid internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return
+	}
 
 	dir := "."
 	if fs.NArg() >= 1 {
@@ -95,9 +125,15 @@ func builddirCmd(args []string) {
 	}
 }
 
+func builddirUsage() { fmt.Println("Usage: go-rua builddir [--offline] [--force] [dir]") }
+
 func shellcheckCmd(args []string) {
-	fs := flag.NewFlagSet("shellcheck", flag.ExitOnError)
-	_ = fs.Parse(args)
+	fs := flag.NewFlagSet("shellcheck", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = shellcheckUsage
+	if err := fs.Parse(args); err != nil {
+		return
+	}
 	var target string
 	if fs.NArg() == 0 {
 		target = "/dev/stdin"
@@ -122,9 +158,15 @@ func shellcheckCmd(args []string) {
 	}
 }
 
+func shellcheckUsage() { fmt.Println("Usage: go-rua shellcheck [file|dir]") }
+
 func namcapCmd(args []string) {
-	fs := flag.NewFlagSet("namcap", flag.ExitOnError)
-	_ = fs.Parse(args)
+	fs := flag.NewFlagSet("namcap", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = namcapUsage
+	if err := fs.Parse(args); err != nil {
+		return
+	}
 	var target string
 	if fs.NArg() == 0 {
 		target = "."
@@ -137,17 +179,24 @@ func namcapCmd(args []string) {
 	}
 }
 
+func namcapUsage() { fmt.Println("Usage: go-rua namcap [file|dir]") }
+
 func installCmd(args []string) {
-	fs := flag.NewFlagSet("install", flag.ExitOnError)
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = installUsage
 	offline := fs.Bool("offline", false, "Forbid internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	planOnly := fs.Bool("plan", false, "Print build plan and exit")
 	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
 	installBuilt := fs.Bool("install", false, "Install built artifacts after staging")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return
+	}
 	pkgs := fs.Args()
 	if len(pkgs) == 0 {
-		fatalf("install: need at least one package")
+		fs.Usage()
+		return
 	}
 	p := paths.MustInit()
 	if err := buildDepsNote(); err != nil { /* ignore */
@@ -208,11 +257,28 @@ func installCmd(args []string) {
 	}
 }
 
+func installUsage() {
+	fmt.Println("Usage: go-rua install [--offline] [--force] [--install] [--plan] [--install-repo-deps] <pkgs...>")
+	fmt.Println("Options:")
+	fmt.Println("  --offline             Forbid internet access while building")
+	fmt.Println("  --force               Pass --force to makepkg")
+	fmt.Println("  --install             Install built artifacts after staging")
+	fmt.Println("  --plan                Print build plan and exit")
+	fmt.Println("  --install-repo-deps   Install missing repo deps with pacman")
+}
+
 func searchCmd(args []string) {
-	if len(args) == 0 {
-		fatalf("search: need at least one keyword")
+	fs := flag.NewFlagSet("search", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = searchUsage
+	if err := fs.Parse(args); err != nil {
+		return
 	}
-	results, err := aur.Search(args)
+	if fs.NArg() == 0 {
+		fs.Usage()
+		return
+	}
+	results, err := aur.Search(fs.Args())
 	if err != nil {
 		fatalf("search failed: %v", err)
 	}
@@ -221,11 +287,20 @@ func searchCmd(args []string) {
 	}
 }
 
+func searchUsage() { fmt.Println("Usage: go-rua search <keywords...>") }
+
 func infoCmd(args []string) {
-	if len(args) == 0 {
-		fatalf("info: need at least one package name")
+	fs := flag.NewFlagSet("info", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = infoUsage
+	if err := fs.Parse(args); err != nil {
+		return
 	}
-	info, err := aur.Info(args)
+	if fs.NArg() == 0 {
+		fs.Usage()
+		return
+	}
+	info, err := aur.Info(fs.Args())
 	if err != nil {
 		fatalf("info failed: %v", err)
 	}
@@ -236,14 +311,20 @@ func infoCmd(args []string) {
 	}
 }
 
+func infoUsage() { fmt.Println("Usage: go-rua info <pkg1> [pkg2 ...]") }
+
 func upgradeCmd(args []string) {
-	fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
+	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = upgradeUsage
 	printOnly := fs.Bool("printonly", false, "Print outdated packages and exit")
 	apply := fs.Bool("apply", false, "Build and install outdated AUR packages")
 	offline := fs.Bool("offline", false, "Forbid internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return
+	}
 	outdated, err := findOutdated()
 	if err != nil {
 		fatalf("upgrade check failed: %v", err)
@@ -298,6 +379,10 @@ func upgradeCmd(args []string) {
 			fatalf("upgrade failed for %s: %v", name, err)
 		}
 	}
+}
+
+func upgradeUsage() {
+	fmt.Println("Usage: go-rua upgrade [--printonly|--apply] [--offline] [--force] [--install-repo-deps]")
 }
 
 func fatalf(format string, a ...any) {
