@@ -86,7 +86,7 @@ func sandboxExec() {
 
 	// Decide execution strategy: bubblewrap for net isolation if requested/available, else Landlock-only.
 	useBwrap := false
-	if cfg.UseBubblewrap && !cfg.UnrestrictedNet {
+	if cfg.UseBubblewrap {
 		if _, err := exec.LookPath("bwrap"); err == nil {
 			useBwrap = true
 		}
@@ -137,8 +137,11 @@ func sandboxExec() {
 	_ = prSetNoNewPrivs()
 
 	// Optionally wrap with bubblewrap for network isolation
-	if useBwrap && !cfg.UnrestrictedNet {
-		bwargs := []string{"bwrap", "--die-with-parent", "--unshare-net", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"}
+	if useBwrap {
+		bwargs := []string{"bwrap", "--die-with-parent", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"}
+		if !cfg.UnrestrictedNet {
+			bwargs = append([]string{"bwrap", "--die-with-parent", "--unshare-net", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"}, bwargs[4:]...)
+		}
 		// map binds
 		for _, p := range cfg.RO {
 			bwargs = append(bwargs, "--ro-bind", p, p)

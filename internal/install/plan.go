@@ -13,6 +13,9 @@ type Plan struct {
 	BuildOrder  []string
 	RepoMissing []string
 	Unknown     []string
+	// Depths assigns each AUR package name a depth where 0 are requested targets,
+	// and larger numbers are deeper dependencies. Max depth builds first.
+	Depths map[string]int
 }
 
 // BuildPlan resolves AUR targets and transitive AUR deps, determines repo deps
@@ -64,9 +67,10 @@ func BuildPlan(targets []string) (Plan, error) {
 	}
 	sort.Strings(aurNames)
 
-	// Build edges: dep -> pkg for AUR-only edges
+	// Build edges: dep -> pkg for AUR-only edges, and deps map: pkg -> deps (AUR-only)
 	edges := map[string][]string{}
 	indeg := map[string]int{}
+	deps := map[string][]string{}
 	for _, n := range aurNames {
 		indeg[n] = 0
 	}
@@ -76,6 +80,7 @@ func BuildPlan(targets []string) (Plan, error) {
 			if _, ok := infoByName[dn]; ok {
 				edges[dn] = append(edges[dn], inf.Name)
 				indeg[inf.Name]++
+				deps[inf.Name] = append(deps[inf.Name], dn)
 			}
 		}
 	}
@@ -128,11 +133,41 @@ func BuildPlan(targets []string) (Plan, error) {
 		}
 	}
 
+	// Compute depths from targets: distance through deps (pkg -> deps)
+	depths := map[string]int{}
+	// initialize known nodes to 0; targets start at 0 explicitly
+	for _, n := range aurNames {
+		depths[n] = 0
+	}
+	// mark requested targets
+	tset := map[string]struct{}{}
+	for _, t := range targets {
+		if _, ok := infoByName[t]; ok {
+			tset[t] = struct{}{}
+		}
+	}
+	// BFS-like propagation: from each target, deps get +1, taking max across paths
+	queue := make([]string, 0, len(tset))
+	for t := range tset {
+		queue = append(queue, t)
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, d := range deps[cur] {
+			if depths[d] < depths[cur]+1 {
+				depths[d] = depths[cur] + 1
+				queue = append(queue, d)
+			}
+		}
+	}
+
 	return Plan{
 		Targets:     dedupCopy(targets),
 		BuildOrder:  order,
 		RepoMissing: repoMissing,
 		Unknown:     unknown,
+		Depths:      depths,
 	}, nil
 }
 

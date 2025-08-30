@@ -9,13 +9,15 @@ Implemented commands
 - builddir: Build a PKGBUILD directory in a sandbox.
   - Flags: `--offline`, `--force`, `--no-seccomp`.
 - shellcheck: Run shellcheck for a PKGBUILD in a sandbox.
+  - Uses a wrapper to set PKGBUILD-specific variables to reduce false positives.
 - namcap: Run namcap for a PKGBUILD in a sandbox.
 - install: Clone AUR repos, review, build, stage, optional install.
-  - Flags: `--offline`, `--force`, `--install`, `--plan`, `--install-repo-deps`, `--no-seccomp`.
-- search: Search AUR by name/description via RPC.
-- info: Show AUR package info via RPC (JSON output).
+  - Flags: `--offline`, `--force`, `--install`, `--asdeps`, `--plan`, `--install-repo-deps`, `--no-seccomp`.
+- tarcheck: Inspect a built package archive interactively (SUID, execs, INSTALL, etc.).
+- search: Search AUR by name/description via RPC; ALL provided keywords must match (AND semantics).
+- info: Show AUR package info via RPC (human-readable; use `--json` for raw JSON).
 - upgrade: Print or apply upgrades for outdated AUR packages.
-  - Flags: `--printonly`, `--apply`, `--offline`, `--force`, `--install-repo-deps`, `--no-seccomp`.
+  - Flags: `--printonly`, `--apply`, `--devel`, `--ignore=<pkg1,pkg2>`, `--offline`, `--force`, `--install-repo-deps`, `--no-seccomp`.
 
 Dependency planning and summaries
 
@@ -23,7 +25,9 @@ Dependency planning and summaries
 - Pre-install summary shows missing repo deps and unknown/virtual deps.
 - `install --plan` prints a build plan with topological order, repo deps to install, and unknowns.
 - `upgrade` without flags prints the plan; with `--apply` it builds/install in plan order.
-- Optional `--install-repo-deps` runs `sudo pacman -S --needed ...` for missing repo deps.
+- `upgrade --devel` considers VCS packages (-git/-hg/-bzr/-svn/-cvs/-darcs) as candidates.
+- `upgrade --ignore` and pacman `IgnorePkg` omit packages from upgrade checks; nonexistent packages are reported.
+- Optional `--install-repo-deps` runs `pacman -S --needed` using the elevation tool (see below) for missing repo deps.
 
 Sandboxing
 
@@ -33,6 +37,7 @@ Sandboxing
   - Minimal env pass-through. `no_new_privs` set best-effort before exec.
 - Bubblewrap (optional): When `--offline`, go-rua prefers bubblewrap if available to enforce network isolation with `--unshare-net`, while mapping Landlock-like binds. Disable with `RUA_NO_BWRAP=1`.
 - Seccomp denylist (optional, default on): A minimal seccomp-bpf denylist blocks risky syscalls (ptrace, bpf, userfaultfd, kexec, perf_event_open, name/open_by_handle, setns, mount family, pivot_root, module load, keyctl, process_vm_* , fanotify_init, chroot, reboot, iopl/ioperm, swapon/swapoff). Disable with `--no-seccomp` for debugging.
+ - Offline builds: When `--offline` is used, go-rua first runs a prefetch step (`makepkg -f --verifysource`) with network allowed, using a static PKGBUILD generated from `.SRCINFO` when available, then builds with network disabled.
 
 Typical flows
 
@@ -52,6 +57,8 @@ Notes
 - Bubblewrap is used only when available and when `--offline` is set; otherwise Landlock-only.
 - Network isolation cannot be guaranteed by Landlock alone; bubblewrap’s `--unshare-net` provides stronger isolation.
 - The seccomp denylist returns EPERM for denied syscalls to reduce breakage; you can disable it per command with `--no-seccomp`.
+- Elevation command: set `RUA_SUDO_COMMAND` to override the default `sudo` (e.g., `doas`, `suex`, etc.). Printed hints and pacman calls respect it.
+ - Colors: honors `NO_COLOR`, `CLICOLOR`/`CLICOLOR_FORCE`, and `RUA_COLOR=always|never|auto`.
 
 Development
 

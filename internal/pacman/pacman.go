@@ -111,13 +111,22 @@ func IsRepoPackage(name string) (bool, error) {
 	return true, nil
 }
 
+// SudoCommand returns the sudo-like command to elevate pacman calls.
+// Respects RUA_SUDO_COMMAND; defaults to "sudo".
+func SudoCommand() string {
+	if v := os.Getenv("RUA_SUDO_COMMAND"); v != "" {
+		return v
+	}
+	return "sudo"
+}
+
 // InstallRepoDeps runs `sudo pacman -S --needed ...` for the given names.
 func InstallRepoDeps(names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
 	args := append([]string{"pacman", "-S", "--needed"}, names...)
-	cmd := exec.Command("sudo", args...)
+	cmd := exec.Command(SudoCommand(), args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -130,9 +139,44 @@ func InstallLocal(files []string) error {
 		return nil
 	}
 	args := append([]string{"pacman", "-U", "--needed"}, files...)
-	cmd := exec.Command("sudo", args...)
+	cmd := exec.Command(SudoCommand(), args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// InstallLocalWithMode installs local package files using pacman -U, optionally as dependencies.
+func InstallLocalWithMode(files []string, asDeps bool) error {
+	if len(files) == 0 {
+		return nil
+	}
+	base := []string{"pacman", "-U", "--needed"}
+	if asDeps {
+		base = append(base, "--asdeps")
+	}
+	args := append(base, files...)
+	cmd := exec.Command(SudoCommand(), args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// GetIgnoredPackages returns packages listed in pacman.conf IgnorePkg.
+func GetIgnoredPackages() ([]string, error) {
+	cmd := exec.Command("pacman-conf", "IgnorePkg")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("pacman-conf IgnorePkg failed: %w", err)
+	}
+	var res []string
+	sc := bufio.NewScanner(strings.NewReader(string(out)))
+	for sc.Scan() {
+		t := strings.TrimSpace(sc.Text())
+		if t != "" {
+			res = append(res, t)
+		}
+	}
+	return res, nil
 }

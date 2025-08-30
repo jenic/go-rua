@@ -17,7 +17,7 @@ type Config struct {
 	BestEffort      bool
 	UnrestrictedFS  bool
 	UnrestrictedNet bool // best-effort; may not be enforced by Landlock
-	UseBubblewrap   bool // when true and UnrestrictedNet=false, prefer bwrap --unshare-net
+	UseBubblewrap   bool // when true, wrap process in bubblewrap; add --unshare-net when UnrestrictedNet=false
 	SeccompDenylist bool // apply a minimal seccomp denylist to the target process
 }
 

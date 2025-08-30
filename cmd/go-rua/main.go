@@ -14,6 +14,8 @@ import (
 	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
 	"go-rua/internal/shellutil"
+	"go-rua/internal/tarcheck"
+	"go-rua/internal/term"
 )
 
 var Version string
@@ -28,15 +30,39 @@ func usage() {
 	fmt.Println("  builddir [--offline] [--force] [dir]    Build a PKGBUILD directory in sandbox")
 	fmt.Println("  shellcheck [file|dir]                   Run shellcheck for PKGBUILD (sandboxed)")
 	fmt.Println("  namcap [file|dir]                       Run namcap for PKGBUILD (sandboxed)")
-	fmt.Println("  install [--offline] [--force] [--install] [--plan] <pkgs..>  Clone AUR repos, review, build, stage, optional install")
+	fmt.Println("  install [--offline] [--force] [--install] [--asdeps] [--plan] <pkgs..>  Clone AUR repos, review, build, stage, optional install")
 	fmt.Println("  search <keywords...>                    Search AUR by name/desc")
 	fmt.Println("  info <pkg1> [pkg2 ...]                  Show AUR package info")
-	fmt.Println("  upgrade [--printonly|--apply]           Print or apply upgrades for AUR packages")
+	fmt.Println("  tarcheck <archive>                      Inspect built package archive (interactive)")
+	fmt.Println("  upgrade [--printonly|--apply] [--devel] [--ignore=<pkg1,pkg2>]   Print or apply upgrades for AUR packages")
 	fmt.Println("  version                                 Show version")
 	fmt.Println()
 }
 
 func main() {
+	// Global color flag: --color=always|never|auto (set RUA_COLOR env and strip from args)
+	if len(os.Args) > 1 {
+		filtered := []string{}
+		skipNext := false
+		for i := 0; i < len(os.Args); i++ {
+			if skipNext {
+				skipNext = false
+				continue
+			}
+			a := os.Args[i]
+			if strings.HasPrefix(a, "--color=") {
+				os.Setenv("RUA_COLOR", strings.TrimPrefix(a, "--color="))
+				continue
+			}
+			if a == "--color" && i+1 < len(os.Args) {
+				os.Setenv("RUA_COLOR", os.Args[i+1])
+				skipNext = true
+				continue
+			}
+			filtered = append(filtered, a)
+		}
+		os.Args = filtered
+	}
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
@@ -63,6 +89,8 @@ func main() {
 		searchCmd(os.Args[2:])
 	case "info":
 		infoCmd(os.Args[2:])
+	case "tarcheck":
+		tarcheckCmd(os.Args[2:])
 	case "upgrade":
 		upgradeCmd(os.Args[2:])
 	case "help", "-h", "--help":
@@ -92,6 +120,8 @@ func helpCmd(args []string) {
 		searchUsage()
 	case "info":
 		infoUsage()
+	case "tarcheck":
+		tarcheckUsage()
 	case "upgrade":
 		upgradeUsage()
 	default:
@@ -107,6 +137,7 @@ func builddirCmd(args []string) {
 	offline := fs.Bool("offline", false, "Forbid internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
+	forceBwrap := fs.Bool("bwrap", false, "Force bubblewrap isolation even when not offline")
 	if err := fs.Parse(args); err != nil {
 		return
 	}
@@ -121,13 +152,16 @@ func builddirCmd(args []string) {
 	}
 
 	p := paths.MustInit()
+	if *forceBwrap {
+		_ = os.Setenv("RUA_ALWAYS_BWRAP", "1")
+	}
 	if err := build.BuildDirectory(abs, p, *offline, *force, !*noSeccomp); err != nil {
 		fatalf("build failed: %v", err)
 	}
 }
 
 func builddirUsage() {
-	fmt.Println("Usage: go-rua builddir [--offline] [--force] [--no-seccomp] [dir]")
+	fmt.Println("Usage: go-rua builddir [--offline] [--force] [--no-seccomp] [--bwrap] [dir]")
 }
 
 func shellcheckCmd(args []string) {
@@ -190,6 +224,7 @@ func installCmd(args []string) {
 	fs.Usage = installUsage
 	offline := fs.Bool("offline", false, "Forbid internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
+	asdeps := fs.Bool("asdeps", false, "Install built packages as dependencies")
 	planOnly := fs.Bool("plan", false, "Print build plan and exit")
 	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
 	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
@@ -218,15 +253,15 @@ func installCmd(args []string) {
 		if err != nil {
 			fatalf("plan failed: %v", err)
 		}
-		fmt.Println("Plan:")
+		fmt.Println(term.Bold("Plan:"))
 		if len(plan.BuildOrder) == 0 {
 			fmt.Println("  (no AUR builds needed)")
 		} else {
 			fmt.Printf("  Build order: %s\n", strings.Join(plan.BuildOrder, ", "))
 		}
 		if len(plan.RepoMissing) > 0 {
-			fmt.Printf("  Repo deps missing: %s\n", strings.Join(plan.RepoMissing, ", "))
-			fmt.Printf("    Install: sudo pacman -S --needed %s\n", strings.Join(plan.RepoMissing, " "))
+			fmt.Printf("  %s %s\n", term.Yellow("Repo deps missing:"), strings.Join(plan.RepoMissing, ", "))
+			fmt.Printf("    Install: %s pacman -S --needed %s\n", pacman.SudoCommand(), strings.Join(plan.RepoMissing, " "))
 		} else {
 			fmt.Println("  Repo deps missing: none")
 		}
@@ -255,18 +290,19 @@ func installCmd(args []string) {
 		}
 	}
 	if err := (func() error {
-		return install.Install(pkgs, p, install.Options{Offline: *offline, Force: *force, InstallBuilt: *installBuilt, DisableSeccomp: *noSeccomp})
+		return install.Install(pkgs, p, install.Options{Offline: *offline, Force: *force, InstallBuilt: *installBuilt, DisableSeccomp: *noSeccomp, AsDeps: *asdeps})
 	})(); err != nil {
 		fatalf("install failed: %v", err)
 	}
 }
 
 func installUsage() {
-	fmt.Println("Usage: go-rua install [--offline] [--force] [--install] [--plan] [--install-repo-deps] [--no-seccomp] <pkgs...>")
+	fmt.Println("Usage: go-rua install [--offline] [--force] [--install] [--asdeps] [--plan] [--install-repo-deps] [--no-seccomp] <pkgs...>")
 	fmt.Println("Options:")
 	fmt.Println("  --offline             Forbid internet access while building")
 	fmt.Println("  --force               Pass --force to makepkg")
 	fmt.Println("  --install             Install built artifacts after staging")
+	fmt.Println("  --asdeps              Install built packages as dependencies")
 	fmt.Println("  --plan                Print build plan and exit")
 	fmt.Println("  --install-repo-deps   Install missing repo deps with pacman")
 	fmt.Println("  --no-seccomp          Disable seccomp denylist for build (debug)")
@@ -283,7 +319,7 @@ func searchCmd(args []string) {
 		fs.Usage()
 		return
 	}
-	results, err := aur.Search(fs.Args())
+	results, err := aur.SearchAND(fs.Args())
 	if err != nil {
 		fatalf("search failed: %v", err)
 	}
@@ -298,6 +334,7 @@ func infoCmd(args []string) {
 	fs := flag.NewFlagSet("info", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
 	fs.Usage = infoUsage
+	jsonOut := fs.Bool("json", false, "Output JSON")
 	if err := fs.Parse(args); err != nil {
 		return
 	}
@@ -309,14 +346,78 @@ func infoCmd(args []string) {
 	if err != nil {
 		fatalf("info failed: %v", err)
 	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(info); err != nil {
-		fatalf("encode failed: %v", err)
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(info); err != nil {
+			fatalf("encode failed: %v", err)
+		}
+		return
+	}
+	// pretty text output
+	for _, p := range info {
+		fmt.Printf("%s %s\n", p.Name, p.Version)
+		if d := strings.TrimSpace(p.Description); d != "" {
+			fmt.Printf("  desc: %s\n", d)
+		}
+		if p.URL != "" {
+			fmt.Printf("  url:  %s\n", p.URL)
+		}
+		if p.Maintainer != "" {
+			fmt.Printf("  maintainer: %s\n", p.Maintainer)
+		}
+		if p.NumVotes > 0 || p.Popularity > 0 {
+			fmt.Printf("  votes: %d  pop: %.2f\n", p.NumVotes, p.Popularity)
+		}
+		if p.OutOfDate > 0 {
+			fmt.Printf("  out-of-date: %d\n", p.OutOfDate)
+		}
+		if len(p.Depends) > 0 {
+			fmt.Printf("  depends: %s\n", strings.Join(p.Depends, ", "))
+		}
+		if len(p.MakeDepends) > 0 {
+			fmt.Printf("  makedepends: %s\n", strings.Join(p.MakeDepends, ", "))
+		}
+		if len(p.CheckDepends) > 0 {
+			fmt.Printf("  checkdepends: %s\n", strings.Join(p.CheckDepends, ", "))
+		}
+		if len(p.OptDepends) > 0 {
+			fmt.Printf("  optdepends: %s\n", strings.Join(p.OptDepends, ", "))
+		}
+		if len(p.Provides) > 0 {
+			fmt.Printf("  provides: %s\n", strings.Join(p.Provides, ", "))
+		}
+		if len(p.Conflicts) > 0 {
+			fmt.Printf("  conflicts: %s\n", strings.Join(p.Conflicts, ", "))
+		}
+		fmt.Println()
 	}
 }
 
-func infoUsage() { fmt.Println("Usage: go-rua info <pkg1> [pkg2 ...]") }
+func infoUsage() { fmt.Println("Usage: go-rua info [--json] <pkg1> [pkg2 ...]") }
+
+func tarcheckCmd(args []string) {
+	fs := flag.NewFlagSet("tarcheck", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	fs.Usage = tarcheckUsage
+	if err := fs.Parse(args); err != nil {
+		return
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		return
+	}
+	target := fs.Arg(0)
+	if _, err := os.Stat(target); err != nil {
+		fatalf("cannot access %s: %v", target, err)
+	}
+	if err := tarcheck.TarCheck(target); err != nil {
+		fatalf("tarcheck failed: %v", err)
+	}
+	fmt.Fprintf(os.Stderr, "Finished checking package: %s\n", target)
+}
+
+func tarcheckUsage() { fmt.Println("Usage: go-rua tarcheck <archive>") }
 
 func upgradeCmd(args []string) {
 	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
@@ -324,6 +425,8 @@ func upgradeCmd(args []string) {
 	fs.Usage = upgradeUsage
 	printOnly := fs.Bool("printonly", false, "Print outdated packages and exit")
 	apply := fs.Bool("apply", false, "Build and install outdated AUR packages")
+	devel := fs.Bool("devel", false, "Also rebuild development VCS packages (-git, -hg, -bzr, -svn, -cvs, -darcs)")
+	ignore := fs.String("ignore", "", "Comma-separated list of packages to ignore")
 	offline := fs.Bool("offline", false, "Forbid internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
@@ -331,39 +434,53 @@ func upgradeCmd(args []string) {
 	if err := fs.Parse(args); err != nil {
 		return
 	}
-	outdated, err := findOutdated()
+	outdated, nonexistent, err := findOutdated(*devel, *ignore)
 	if err != nil {
 		fatalf("upgrade check failed: %v", err)
 	}
-	if len(outdated) == 0 {
+	if len(outdated) == 0 && len(nonexistent) == 0 {
 		os.Exit(7)
 	}
 	if *printOnly && !*apply {
 		for _, n := range outdated {
 			fmt.Println(n)
 		}
+		for _, n := range nonexistent {
+			fmt.Println(n)
+		}
 		return
 	}
 	// default without flags: print a plan
 	if !*apply {
+		// Detailed outdated table
+		items, _, _ := listOutdatedDetailed(*devel, *ignore)
+		if len(items) > 0 {
+			fmt.Println(term.Bold("Outdated AUR packages:"))
+			for _, it := range items {
+				fmt.Printf("  %s  %s -> %s\n", it.Name, it.Local, it.Latest)
+			}
+		}
 		plan, err := install.BuildPlan(outdated)
 		if err != nil {
 			fatalf("plan failed: %v", err)
 		}
-		fmt.Println("Plan:")
+		fmt.Println(term.Bold("Plan:"))
 		if len(plan.BuildOrder) == 0 {
 			fmt.Println("  (no AUR builds needed)")
 		} else {
 			fmt.Printf("  Build order: %s\n", strings.Join(plan.BuildOrder, ", "))
 		}
 		if len(plan.RepoMissing) > 0 {
-			fmt.Printf("  Repo deps missing: %s\n", strings.Join(plan.RepoMissing, ", "))
-			fmt.Printf("    Install: sudo pacman -S --needed %s\n", strings.Join(plan.RepoMissing, " "))
+			fmt.Printf("  %s %s\n", term.Yellow("Repo deps missing:"), strings.Join(plan.RepoMissing, ", "))
+			fmt.Printf("    Install: %s pacman -S --needed %s\n", pacman.SudoCommand(), strings.Join(plan.RepoMissing, " "))
 		} else {
 			fmt.Println("  Repo deps missing: none")
 		}
 		if len(plan.Unknown) > 0 {
 			fmt.Printf("  Unknown deps: %s\n", strings.Join(plan.Unknown, ", "))
+		}
+		if len(nonexistent) > 0 {
+			fmt.Printf("  Note: %d installed packages not found in AUR: %s\n", len(nonexistent), strings.Join(nonexistent, ", "))
 		}
 		return
 	}
@@ -388,7 +505,7 @@ func upgradeCmd(args []string) {
 }
 
 func upgradeUsage() {
-	fmt.Println("Usage: go-rua upgrade [--printonly|--apply] [--offline] [--force] [--install-repo-deps] [--no-seccomp]")
+	fmt.Println("Usage: go-rua upgrade [--printonly|--apply] [--devel] [--ignore=<pkg1,pkg2>] [--offline] [--force] [--install-repo-deps] [--no-seccomp]")
 }
 
 func fatalf(format string, a ...any) {
@@ -405,30 +522,56 @@ func buildDepsNote() error {
 }
 
 // findOutdated returns names of foreign packages that have newer AUR versions
-func findOutdated() ([]string, error) {
+func findOutdated(devel bool, ignoreCSV string) ([]string, []string, error) {
 	foreign, err := pacman.GetForeignPackages()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	names := make([]string, 0, len(foreign))
 	for _, f := range foreign {
 		names = append(names, f.Name)
 	}
 	if len(names) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	infos, err := aur.Info(names)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	byName := map[string]string{}
 	for _, inf := range infos {
 		byName[inf.Name] = inf.Version
 	}
+	// ignored from CLI and pacman-conf
+	ignoreSet := map[string]struct{}{}
+	if ignoreCSV != "" {
+		for _, s := range strings.Split(ignoreCSV, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				ignoreSet[s] = struct{}{}
+			}
+		}
+	}
+	if sysIg, err := pacman.GetIgnoredPackages(); err == nil {
+		for _, s := range sysIg {
+			ignoreSet[s] = struct{}{}
+		}
+	}
 	var outdated []string
+	var nonexistent []string
 	for _, f := range foreign {
+		if _, ig := ignoreSet[f.Name]; ig {
+			continue
+		}
 		latest := byName[f.Name]
 		if latest == "" {
+			// not found in AUR
+			nonexistent = append(nonexistent, f.Name)
+			continue
+		}
+		// consider VCS packages when --devel
+		if devel && isDevelPkg(f.Name) {
+			outdated = append(outdated, f.Name)
 			continue
 		}
 		cmp, err := pacman.Vercmp(f.Version, latest)
@@ -439,5 +582,78 @@ func findOutdated() ([]string, error) {
 			outdated = append(outdated, f.Name)
 		}
 	}
-	return outdated, nil
+	return outdated, nonexistent, nil
+}
+
+func isDevelPkg(name string) bool {
+	// matches -git, -hg, -bzr, -svn, -cvs, -darcs optionally with additional suffixes
+	for _, suf := range []string{"-git", "-hg", "-bzr", "-svn", "-cvs", "-darcs"} {
+		if strings.Contains(name, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+type OutdatedItem struct {
+	Name   string
+	Local  string
+	Latest string
+}
+
+func listOutdatedDetailed(devel bool, ignoreCSV string) ([]OutdatedItem, []string, error) {
+	foreign, err := pacman.GetForeignPackages()
+	if err != nil {
+		return nil, nil, err
+	}
+	names := make([]string, 0, len(foreign))
+	for _, f := range foreign {
+		names = append(names, f.Name)
+	}
+	if len(names) == 0 {
+		return nil, nil, nil
+	}
+	infos, err := aur.Info(names)
+	if err != nil {
+		return nil, nil, err
+	}
+	byName := map[string]string{}
+	for _, inf := range infos {
+		byName[inf.Name] = inf.Version
+	}
+	ignoreSet := map[string]struct{}{}
+	if ignoreCSV != "" {
+		for _, s := range strings.Split(ignoreCSV, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				ignoreSet[s] = struct{}{}
+			}
+		}
+	}
+	if sysIg, err := pacman.GetIgnoredPackages(); err == nil {
+		for _, s := range sysIg {
+			ignoreSet[s] = struct{}{}
+		}
+	}
+	var items []OutdatedItem
+	var nonexistent []string
+	for _, f := range foreign {
+		if _, ig := ignoreSet[f.Name]; ig {
+			continue
+		}
+		latest := byName[f.Name]
+		if latest == "" {
+			nonexistent = append(nonexistent, f.Name)
+			continue
+		}
+		if devel && isDevelPkg(f.Name) {
+			items = append(items, OutdatedItem{Name: f.Name, Local: f.Version, Latest: latest})
+			continue
+		}
+		cmp, err := pacman.Vercmp(f.Version, latest)
+		if err == nil && cmp < 0 {
+			items = append(items, OutdatedItem{Name: f.Name, Local: f.Version, Latest: latest})
+		}
+	}
+	return items, nonexistent, nil
 }

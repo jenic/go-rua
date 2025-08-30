@@ -7,6 +7,7 @@ import (
 
 	"go-rua/internal/aur"
 	"go-rua/internal/pacman"
+	"go-rua/internal/term"
 )
 
 // DepSummary describes dependency status for requested AUR targets.
@@ -94,11 +95,19 @@ func SummarizeForAUR(pkgs []string, infos []aur.Package) (DepSummary, error) {
 // FormatSummary renders a compact human-readable summary.
 func FormatSummary(s DepSummary) string {
 	b := &strings.Builder{}
-	fmt.Fprintln(b, "Summary:")
+	if term.Enabled() {
+		fmt.Fprintln(b, term.Bold("Summary:"))
+	} else {
+		fmt.Fprintln(b, "Summary:")
+	}
 	fmt.Fprintf(b, "  AUR targets: %s\n", strings.Join(s.Targets, ", "))
 	if len(s.RepoMissing) > 0 {
-		fmt.Fprintf(b, "  Repo deps missing: %s\n", strings.Join(s.RepoMissing, ", "))
-		fmt.Fprintf(b, "    Install: sudo pacman -S --needed %s\n", strings.Join(s.RepoMissing, " "))
+		if term.Enabled() {
+			fmt.Fprintf(b, "  %s %s\n", term.Yellow("Repo deps missing:"), strings.Join(s.RepoMissing, ", "))
+		} else {
+			fmt.Fprintf(b, "  Repo deps missing: %s\n", strings.Join(s.RepoMissing, ", "))
+		}
+		fmt.Fprintf(b, "    Install: %s pacman -S --needed %s\n", pacman.SudoCommand(), strings.Join(s.RepoMissing, " "))
 	} else {
 		fmt.Fprintln(b, "  Repo deps missing: none")
 	}

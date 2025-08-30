@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -38,8 +39,7 @@ type rpcResponse struct {
 var httpClient = &http.Client{Timeout: 20 * time.Second}
 
 func Search(terms []string) ([]Package, error) {
-	// AND all terms using multiple by fields=name,desc
-	// simplify: use "by=name" and "by=desc" separately and merge unique
+	// Legacy OR search across terms (kept for compatibility if needed elsewhere)
 	seen := map[string]Package{}
 	for _, by := range []string{"name", "desc"} {
 		for _, t := range terms {
@@ -56,6 +56,52 @@ func Search(terms []string) ([]Package, error) {
 	out := make([]Package, 0, len(seen))
 	for _, p := range seen {
 		out = append(out, p)
+	}
+	return out, nil
+}
+
+// SearchAND performs AUR search that requires all keywords to match
+// either in name or description. It queries by the longest keyword and
+// then filters locally for the rest.
+func SearchAND(terms []string) ([]Package, error) {
+	if len(terms) == 0 {
+		return nil, nil
+	}
+	// pick the longest term as the initial query
+	longest := terms[0]
+	for _, t := range terms[1:] {
+		if len(t) > len(longest) {
+			longest = t
+		}
+	}
+	// get initial candidate set
+	seen := map[string]Package{}
+	for _, by := range []string{"name", "desc"} {
+		u := fmt.Sprintf("%s&type=search&by=%s&arg=%s", base, by, url.QueryEscape(longest))
+		var resp rpcResponse
+		if err := getJSON(u, &resp); err != nil {
+			return nil, err
+		}
+		for _, p := range resp.Results {
+			seen[p.Name] = p
+		}
+	}
+	// filter: every term must match name or description (case-insensitive)
+	out := []Package{}
+	for _, p := range seen {
+		name := strings.ToLower(p.Name)
+		desc := strings.ToLower(p.Description)
+		ok := true
+		for _, t := range terms {
+			lt := strings.ToLower(t)
+			if !strings.Contains(name, lt) && !strings.Contains(desc, lt) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, p)
+		}
 	}
 	return out, nil
 }

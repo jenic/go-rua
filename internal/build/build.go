@@ -1,7 +1,9 @@
 package build
 
 import (
+	"bufio"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,17 @@ import (
 func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool) error {
 	if _, err := os.Stat(filepath.Join(dir, "PKGBUILD")); err != nil {
 		return fmt.Errorf("PKGBUILD not found in %s: %w", dir, err)
+	}
+	// Warn on unsupported PKGEXT if explicitly set in env (best-effort)
+	if v := os.Getenv("PKGEXT"); v != "" {
+		switch v {
+		case ".pkg.tar", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.gzip", ".pkg.tar.zst", ".pkg.tar.zstd":
+			// ok
+		default:
+			// Color only if available
+			msg := fmt.Sprintf("Warning: PKGEXT=%s may be unsupported by tarcheck; artifacts might not be analyzed.\n", v)
+			fmt.Fprint(os.Stderr, msg)
+		}
 	}
 
 	// Prepare env for makepkg outputs to land in dir
@@ -41,6 +54,13 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool
 		ro = append(ro, filepath.Join(home, ".gnupg"))
 	}
 
+	// If offline, prefetch sources using .SRCINFO/static PKGBUILD, then build offline
+	if offline {
+		if err := prefetchSources(dir, p, seccomp); err != nil {
+			return err
+		}
+	}
+
 	args := []string{"makepkg"}
 	if force {
 		args = append(args, "--force")
@@ -53,17 +73,23 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool
 
 	// Prefer bubblewrap to enforce network isolation when offline, unless disabled
 	useBwrap := false
-	if offline {
-		if v := os.Getenv("RUA_NO_BWRAP"); v == "1" || v == "true" {
+	if v := os.Getenv("RUA_ALWAYS_BWRAP"); v == "1" || strings.ToLower(v) == "true" {
+		useBwrap = true
+	} else if offline {
+		if v := os.Getenv("RUA_NO_BWRAP"); v == "1" || strings.ToLower(v) == "true" {
 			useBwrap = false
 		} else {
 			useBwrap = true
 		}
 	}
+	// Allow user-defined binds from wrap_args.d
+	roAdd, roxAdd, rwAdd, rwxAdd := readWrapArgs(p.ConfigDir)
+
 	cfg := sandbox.Config{
-		RO:              ro,
-		ROX:             rox,
-		RWX:             rwx,
+		RO:              append(ro, roAdd...),
+		ROX:             append(rox, roxAdd...),
+		RW:              rwAdd,
+		RWX:             append(rwx, rwxAdd...),
 		Env:             envs,
 		UnrestrictedNet: !offline,
 		UseBubblewrap:   useBwrap,
@@ -103,3 +129,159 @@ func CopyTree(src, dst string) error {
 }
 
 func escape(s string) string { return strings.ReplaceAll(s, "'", "'\\''") }
+
+// prefetchSources downloads sources ahead of an offline build using .SRCINFO
+// If .SRCINFO exists, generate a minimal static PKGBUILD and run `makepkg -f --verifysource -p PKGBUILD.static`
+// otherwise fall back to `makepkg -f --verifysource` on PKGBUILD. Runs with network access enabled.
+func prefetchSources(dir string, p paths.Paths, seccomp bool) error {
+	// Prepare env
+	envs := []string{
+		"HOME",
+		"PATH",
+		"FAKEROOTDONTTRYCHOWN=true",
+		fmt.Sprintf("PKGDEST=%s", dir),
+		fmt.Sprintf("SRCDEST=%s", dir),
+		fmt.Sprintf("SRCPKGDEST=%s", dir),
+		fmt.Sprintf("LOGDEST=%s", dir),
+		fmt.Sprintf("BUILDDIR=%s", dir),
+	}
+	ro := []string{"/etc", dir}
+	rox := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
+	rwx := []string{dir}
+
+	args := []string{"makepkg", "-f", "--verifysource"}
+	// If .SRCINFO present, generate PKGBUILD.static
+	if _, err := os.Stat(filepath.Join(dir, ".SRCINFO")); err == nil {
+		static := filepath.Join(dir, "PKGBUILD.static")
+		if err := writeStaticPKGBUILDFromSRCINFO(dir, static); err == nil {
+			args = append(args, "-p", "PKGBUILD.static")
+		}
+	}
+	cfg := sandbox.Config{
+		RO:              ro,
+		ROX:             rox,
+		RWX:             rwx,
+		Env:             envs,
+		UnrestrictedNet: true,
+		SeccompDenylist: seccomp,
+	}
+	return sandbox.Run(cfg, args)
+}
+
+// writeStaticPKGBUILDFromSRCINFO parses .SRCINFO and writes a minimal PKGBUILD to dst.
+func writeStaticPKGBUILDFromSRCINFO(dir, dst string) error {
+	f, err := os.Open(filepath.Join(dir, ".SRCINFO"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// Collect keys -> values
+	m := map[string][]string{}
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// lines are typically like: key = value, optionally with indentation
+		parts := strings.SplitN(strings.TrimSpace(line), "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		if key == "pkgbase" || key == "pkgdesc" || key == "url" || key == "arch" ||
+			key == "pkgver" || key == "pkgrel" || key == "epoch" || key == "pkgname" ||
+			strings.HasPrefix(key, "source") || strings.HasSuffix(key, "sums") || strings.HasPrefix(key, "validpgpkeys") {
+			m[key] = append(m[key], val)
+		}
+	}
+	// Helper: array assignment
+	arr := func(name string, vals []string) string {
+		if len(vals) == 0 {
+			return ""
+		}
+		b := &strings.Builder{}
+		fmt.Fprintf(b, "%s=(", name)
+		for i, v := range vals {
+			if i > 0 {
+				b.WriteByte(' ')
+			}
+			fmt.Fprintf(b, "'%s'", strings.ReplaceAll(v, "'", "'\\''"))
+		}
+		b.WriteString(")\n")
+		return b.String()
+	}
+	// multi-keys to emit
+	keys := []string{
+		"pkgname", "pkgver", "pkgrel", "epoch",
+		"source", "source_aarch64", "source_i686", "source_x86_64",
+		"validpgpkeys",
+		"md5sums", "sha1sums", "sha224sums", "sha256sums", "sha384sums", "sha512sums", "b2sums",
+		"md5sums_aarch64", "md5sums_i686", "md5sums_x86_64",
+		"sha1sums_aarch64", "sha1sums_i686", "sha1sums_x86_64",
+		"sha224sums_aarch64", "sha224sums_i686", "sha224sums_x86_64",
+		"sha256sums_aarch64", "sha256sums_i686", "sha256sums_x86_64",
+		"sha384sums_aarch64", "sha384sums_i686", "sha384sums_x86_64",
+		"sha512sums_aarch64", "sha512sums_i686", "sha512sums_x86_64",
+		"b2sums_aarch64", "b2sums_i686", "b2sums_x86_64",
+	}
+	b := &strings.Builder{}
+	b.WriteString("#!/bin/bash\nset -eu\n")
+	for _, k := range keys {
+		if vals, ok := m[k]; ok {
+			b.WriteString(arr(k, vals))
+		}
+	}
+	return os.WriteFile(dst, []byte(b.String()), 0o644)
+}
+
+// readWrapArgs parses ~/.config/rua/wrap_args.d entries to include additional binds.
+// Supported line formats per file: ro:/path, rox:/path, rw:/path, rwx:/path, comments with # and blank lines ignored.
+func readWrapArgs(configDir string) (ro []string, rox []string, rw []string, rwx []string) {
+	d := filepath.Join(configDir, "wrap_args.d")
+	entries, err := os.ReadDir(d)
+	if err != nil {
+		return
+	}
+	parse := func(line string) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			return
+		}
+		var kind, path string
+		if i := strings.Index(line, ":"); i > 0 {
+			kind = line[:i]
+			path = strings.TrimSpace(line[i+1:])
+		}
+		if path == "" {
+			return
+		}
+		switch kind {
+		case "ro":
+			ro = append(ro, path)
+		case "rox":
+			rox = append(rox, path)
+		case "rw":
+			rw = append(rw, path)
+		case "rwx":
+			rwx = append(rwx, path)
+		}
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		_ = func(ent fs.DirEntry) error {
+			b, err := os.ReadFile(filepath.Join(d, ent.Name()))
+			if err != nil {
+				return nil
+			}
+			for _, ln := range strings.Split(string(b), "\n") {
+				parse(ln)
+			}
+			return nil
+		}(e)
+	}
+	return
+}
