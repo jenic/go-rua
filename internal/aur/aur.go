@@ -11,15 +11,21 @@ import (
 const base = "https://aur.archlinux.org/rpc/?v=5"
 
 type Package struct {
-	Name        string  `json:"Name"`
-	Version     string  `json:"Version"`
-	Description string  `json:"Description"`
-	URL         string  `json:"URL"`
-	Maintainer  string  `json:"Maintainer"`
-	NumVotes    int     `json:"NumVotes"`
-	Popularity  float64 `json:"Popularity"`
-	OutOfDate   int64   `json:"OutOfDate"`
-	PackageBase string  `json:"PackageBase"`
+    Name        string  `json:"Name"`
+    Version     string  `json:"Version"`
+    Description string  `json:"Description"`
+    URL         string  `json:"URL"`
+    Maintainer  string  `json:"Maintainer"`
+    NumVotes    int     `json:"NumVotes"`
+    Popularity  float64 `json:"Popularity"`
+    OutOfDate   int64   `json:"OutOfDate"`
+    PackageBase string  `json:"PackageBase"`
+    Depends      []string `json:"Depends"`
+    MakeDepends  []string `json:"MakeDepends"`
+    CheckDepends []string `json:"CheckDepends"`
+    OptDepends   []string `json:"OptDepends"`
+    Provides     []string `json:"Provides"`
+    Conflicts    []string `json:"Conflicts"`
 }
 
 type rpcResponse struct {

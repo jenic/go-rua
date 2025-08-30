@@ -53,3 +53,58 @@ func Vercmp(a, b string) (int, error) {
 		return 0, fmt.Errorf("unexpected vercmp output: %q", val)
 	}
 }
+
+// StripDepName extracts the package/provide name from a dependency expression
+// Examples:
+//   "foo>=1.2" -> "foo"
+//   "bar=2"    -> "bar"
+//   "baz<3"    -> "baz"
+//   "libabc.so" -> "libabc.so"
+func StripDepName(dep string) string {
+    s := strings.TrimSpace(dep)
+    // split on any version relation operator
+    for _, op := range []string{">=", "<=", "=", ">", "<"} {
+        if i := strings.Index(s, op); i >= 0 {
+            return strings.TrimSpace(s[:i])
+        }
+    }
+    return s
+}
+
+// CheckMissing returns which of the given dependency names are not satisfied on the system.
+// It shells out to `pacman -T`, which prints unsatisfied deps one per line.
+func CheckMissing(names []string) ([]string, error) {
+    if len(names) == 0 {
+        return nil, nil
+    }
+    args := append([]string{"-T"}, names...)
+    cmd := exec.Command("pacman", args...)
+    out, err := cmd.Output()
+    if err != nil {
+        // pacman -T returns non-zero only on fatal error; unsatisfied are printed to stdout.
+        // If we get an error here, propagate it since stdout is unreliable.
+        return nil, fmt.Errorf("pacman -T failed: %w", err)
+    }
+    var missing []string
+    sc := bufio.NewScanner(strings.NewReader(string(out)))
+    for sc.Scan() {
+        t := strings.TrimSpace(sc.Text())
+        if t != "" {
+            missing = append(missing, t)
+        }
+    }
+    return missing, nil
+}
+
+// IsRepoPackage checks if a given package name exists in sync db (repos), via `pacman -Si`.
+func IsRepoPackage(name string) (bool, error) {
+    cmd := exec.Command("pacman", "-Si", name)
+    if err := cmd.Run(); err != nil {
+        // non-zero -> not found in repos or pacman error
+        if _, ok := err.(*exec.ExitError); ok {
+            return false, nil
+        }
+        return false, fmt.Errorf("pacman -Si failed: %w", err)
+    }
+    return true, nil
+}

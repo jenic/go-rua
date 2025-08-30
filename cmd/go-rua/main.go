@@ -138,22 +138,28 @@ func namcapCmd(args []string) {
 }
 
 func installCmd(args []string) {
-	fs := flag.NewFlagSet("install", flag.ExitOnError)
-	offline := fs.Bool("offline", false, "Forbid internet access while building")
-	force := fs.Bool("force", false, "Pass --force to makepkg")
-	_ = fs.Parse(args)
-	pkgs := fs.Args()
-	if len(pkgs) == 0 {
-		fatalf("install: need at least one package")
-	}
-	p := paths.MustInit()
-	if err := buildDepsNote(); err != nil { /* ignore */
-	}
-	if err := (func() error {
-		return install.Install(pkgs, p, install.Options{Offline: *offline, Force: *force})
-	})(); err != nil {
-		fatalf("install failed: %v", err)
-	}
+    fs := flag.NewFlagSet("install", flag.ExitOnError)
+    offline := fs.Bool("offline", false, "Forbid internet access while building")
+    force := fs.Bool("force", false, "Pass --force to makepkg")
+    _ = fs.Parse(args)
+    pkgs := fs.Args()
+    if len(pkgs) == 0 {
+        fatalf("install: need at least one package")
+    }
+    p := paths.MustInit()
+    if err := buildDepsNote(); err != nil { /* ignore */
+    }
+    // Print a pacman dependency summary before interactive steps
+    if infos, err := aur.Info(pkgs); err == nil {
+        if sum, err := install.SummarizeForAUR(pkgs, infos); err == nil {
+            fmt.Print(install.FormatSummary(sum))
+        }
+    }
+    if err := (func() error {
+        return install.Install(pkgs, p, install.Options{Offline: *offline, Force: *force})
+    })(); err != nil {
+        fatalf("install failed: %v", err)
+    }
 }
 
 func searchCmd(args []string) {
