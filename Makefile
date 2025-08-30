@@ -1,11 +1,15 @@
 # Basic Makefile for go-rua
 
+TS := $(shell date +%Y%M%d)
+COMMIT=$(shell git describe --long --tags --dirty --always | sed 's/^v//;s/\([^-]*-\)g/r\1/;s/-/./g;s/dirty/dirty_$(TS)/g')
 GO ?= go
 BINARY := go-rua
 BIN_DIR := bin
 CMD_DIR := ./cmd/go-rua
 OUT := $(BIN_DIR)/$(BINARY)
 PKG := ./...
+LDFLAGS=-X main.Version=${COMMIT}
+GOFLAGS=-ldflags="${LDFLAGS}" -buildmode=pie
 
 .PHONY: help build run fmt vet test check smoke clean
 
@@ -14,7 +18,7 @@ help: ## Show available make targets
 
 build: ## Build binary to bin/
 	@mkdir -p $(BIN_DIR)
-	$(GO) build -o $(OUT) $(CMD_DIR)
+	$(GO) build -o $(OUT) ${GOFLAGS} $(CMD_DIR)
 
 run: build ## Run the CLI (usage: make run ARGS="version")
 	$(OUT) $(ARGS)

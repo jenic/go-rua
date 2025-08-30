@@ -16,7 +16,7 @@ import (
 	"go-rua/internal/shellutil"
 )
 
-const version = "0.1.0"
+var Version string
 
 func usage() {
 	fmt.Println("go-rua: AUR helper (Go), sandboxed by Landlock")
@@ -28,10 +28,10 @@ func usage() {
 	fmt.Println("  builddir [--offline] [--force] [dir]    Build a PKGBUILD directory in sandbox")
 	fmt.Println("  shellcheck [file|dir]                   Run shellcheck for PKGBUILD (sandboxed)")
 	fmt.Println("  namcap [file|dir]                       Run namcap for PKGBUILD (sandboxed)")
-    fmt.Println("  install [--offline] [--force] [--install] [--plan] <pkgs..>  Clone AUR repos, review, build, stage, optional install")
+	fmt.Println("  install [--offline] [--force] [--install] [--plan] <pkgs..>  Clone AUR repos, review, build, stage, optional install")
 	fmt.Println("  search <keywords...>                    Search AUR by name/desc")
 	fmt.Println("  info <pkg1> [pkg2 ...]                  Show AUR package info")
-    fmt.Println("  upgrade [--printonly|--apply]           Print or apply upgrades for AUR packages")
+	fmt.Println("  upgrade [--printonly|--apply]           Print or apply upgrades for AUR packages")
 	fmt.Println("  version                                 Show version")
 	fmt.Println()
 }
@@ -49,7 +49,7 @@ func main() {
 		sandboxExec()
 		return
 	case "version", "--version", "-v":
-		fmt.Println(version)
+		fmt.Println(Version)
 		return
 	case "builddir":
 		builddirCmd(os.Args[2:])
@@ -138,74 +138,74 @@ func namcapCmd(args []string) {
 }
 
 func installCmd(args []string) {
-    fs := flag.NewFlagSet("install", flag.ExitOnError)
-    offline := fs.Bool("offline", false, "Forbid internet access while building")
-    force := fs.Bool("force", false, "Pass --force to makepkg")
-    planOnly := fs.Bool("plan", false, "Print build plan and exit")
-    installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
-    installBuilt := fs.Bool("install", false, "Install built artifacts after staging")
-    _ = fs.Parse(args)
-    pkgs := fs.Args()
-    if len(pkgs) == 0 {
-        fatalf("install: need at least one package")
-    }
-    p := paths.MustInit()
-    if err := buildDepsNote(); err != nil { /* ignore */
-    }
-    if *planOnly {
-        infos, err := aur.Info(pkgs)
-        if err != nil {
-            fatalf("failed to fetch AUR info: %v", err)
-        }
-        sum, err := install.SummarizeForAUR(pkgs, infos)
-        if err == nil {
-            fmt.Print(install.FormatSummary(sum))
-        }
-        plan, err := install.BuildPlan(pkgs)
-        if err != nil {
-            fatalf("plan failed: %v", err)
-        }
-        fmt.Println("Plan:")
-        if len(plan.BuildOrder) == 0 {
-            fmt.Println("  (no AUR builds needed)")
-        } else {
-            fmt.Printf("  Build order: %s\n", strings.Join(plan.BuildOrder, ", "))
-        }
-        if len(plan.RepoMissing) > 0 {
-            fmt.Printf("  Repo deps missing: %s\n", strings.Join(plan.RepoMissing, ", "))
-            fmt.Printf("    Install: sudo pacman -S --needed %s\n", strings.Join(plan.RepoMissing, " "))
-        } else {
-            fmt.Println("  Repo deps missing: none")
-        }
-        if len(plan.Unknown) > 0 {
-            fmt.Printf("  Unknown deps: %s\n", strings.Join(plan.Unknown, ", "))
-        }
-        return
-    }
-    // Print a pacman dependency summary before interactive steps
-    if infos, err := aur.Info(pkgs); err == nil {
-        if sum, err := install.SummarizeForAUR(pkgs, infos); err == nil {
-            fmt.Print(install.FormatSummary(sum))
-        }
-    }
-    // Optionally install missing repo deps
-    if *installRepoDeps {
-        plan, err := install.BuildPlan(pkgs)
-        if err != nil {
-            fatalf("plan failed: %v", err)
-        }
-        if len(plan.RepoMissing) > 0 {
-            fmt.Printf("Installing missing repo deps: %s\n", strings.Join(plan.RepoMissing, ", "))
-            if err := pacman.InstallRepoDeps(plan.RepoMissing); err != nil {
-                fatalf("pacman install failed: %v", err)
-            }
-        }
-    }
-    if err := (func() error {
-        return install.Install(pkgs, p, install.Options{Offline: *offline, Force: *force, InstallBuilt: *installBuilt})
-    })(); err != nil {
-        fatalf("install failed: %v", err)
-    }
+	fs := flag.NewFlagSet("install", flag.ExitOnError)
+	offline := fs.Bool("offline", false, "Forbid internet access while building")
+	force := fs.Bool("force", false, "Pass --force to makepkg")
+	planOnly := fs.Bool("plan", false, "Print build plan and exit")
+	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
+	installBuilt := fs.Bool("install", false, "Install built artifacts after staging")
+	_ = fs.Parse(args)
+	pkgs := fs.Args()
+	if len(pkgs) == 0 {
+		fatalf("install: need at least one package")
+	}
+	p := paths.MustInit()
+	if err := buildDepsNote(); err != nil { /* ignore */
+	}
+	if *planOnly {
+		infos, err := aur.Info(pkgs)
+		if err != nil {
+			fatalf("failed to fetch AUR info: %v", err)
+		}
+		sum, err := install.SummarizeForAUR(pkgs, infos)
+		if err == nil {
+			fmt.Print(install.FormatSummary(sum))
+		}
+		plan, err := install.BuildPlan(pkgs)
+		if err != nil {
+			fatalf("plan failed: %v", err)
+		}
+		fmt.Println("Plan:")
+		if len(plan.BuildOrder) == 0 {
+			fmt.Println("  (no AUR builds needed)")
+		} else {
+			fmt.Printf("  Build order: %s\n", strings.Join(plan.BuildOrder, ", "))
+		}
+		if len(plan.RepoMissing) > 0 {
+			fmt.Printf("  Repo deps missing: %s\n", strings.Join(plan.RepoMissing, ", "))
+			fmt.Printf("    Install: sudo pacman -S --needed %s\n", strings.Join(plan.RepoMissing, " "))
+		} else {
+			fmt.Println("  Repo deps missing: none")
+		}
+		if len(plan.Unknown) > 0 {
+			fmt.Printf("  Unknown deps: %s\n", strings.Join(plan.Unknown, ", "))
+		}
+		return
+	}
+	// Print a pacman dependency summary before interactive steps
+	if infos, err := aur.Info(pkgs); err == nil {
+		if sum, err := install.SummarizeForAUR(pkgs, infos); err == nil {
+			fmt.Print(install.FormatSummary(sum))
+		}
+	}
+	// Optionally install missing repo deps
+	if *installRepoDeps {
+		plan, err := install.BuildPlan(pkgs)
+		if err != nil {
+			fatalf("plan failed: %v", err)
+		}
+		if len(plan.RepoMissing) > 0 {
+			fmt.Printf("Installing missing repo deps: %s\n", strings.Join(plan.RepoMissing, ", "))
+			if err := pacman.InstallRepoDeps(plan.RepoMissing); err != nil {
+				fatalf("pacman install failed: %v", err)
+			}
+		}
+	}
+	if err := (func() error {
+		return install.Install(pkgs, p, install.Options{Offline: *offline, Force: *force, InstallBuilt: *installBuilt})
+	})(); err != nil {
+		fatalf("install failed: %v", err)
+	}
 }
 
 func searchCmd(args []string) {
@@ -237,67 +237,67 @@ func infoCmd(args []string) {
 }
 
 func upgradeCmd(args []string) {
-    fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
-    printOnly := fs.Bool("printonly", false, "Print outdated packages and exit")
-    apply := fs.Bool("apply", false, "Build and install outdated AUR packages")
-    offline := fs.Bool("offline", false, "Forbid internet access while building")
-    force := fs.Bool("force", false, "Pass --force to makepkg")
-    installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
-    _ = fs.Parse(args)
-    outdated, err := findOutdated()
-    if err != nil {
-        fatalf("upgrade check failed: %v", err)
-    }
-    if len(outdated) == 0 {
-        os.Exit(7)
-    }
-    if *printOnly && !*apply {
-        for _, n := range outdated {
-            fmt.Println(n)
-        }
-        return
-    }
-    // default without flags: print a plan
-    if !*apply {
-        plan, err := install.BuildPlan(outdated)
-        if err != nil {
-            fatalf("plan failed: %v", err)
-        }
-        fmt.Println("Plan:")
-        if len(plan.BuildOrder) == 0 {
-            fmt.Println("  (no AUR builds needed)")
-        } else {
-            fmt.Printf("  Build order: %s\n", strings.Join(plan.BuildOrder, ", "))
-        }
-        if len(plan.RepoMissing) > 0 {
-            fmt.Printf("  Repo deps missing: %s\n", strings.Join(plan.RepoMissing, ", "))
-            fmt.Printf("    Install: sudo pacman -S --needed %s\n", strings.Join(plan.RepoMissing, " "))
-        } else {
-            fmt.Println("  Repo deps missing: none")
-        }
-        if len(plan.Unknown) > 0 {
-            fmt.Printf("  Unknown deps: %s\n", strings.Join(plan.Unknown, ", "))
-        }
-        return
-    }
-    // apply: build and install in order
-    plan, err := install.BuildPlan(outdated)
-    if err != nil {
-        fatalf("plan failed: %v", err)
-    }
-    if *installRepoDeps && len(plan.RepoMissing) > 0 {
-        fmt.Printf("Installing missing repo deps: %s\n", strings.Join(plan.RepoMissing, ", "))
-        if err := pacman.InstallRepoDeps(plan.RepoMissing); err != nil {
-            fatalf("pacman install failed: %v", err)
-        }
-    }
-    p := paths.MustInit()
-    for _, name := range plan.BuildOrder {
-        fmt.Printf("\n==> Upgrading AUR pkg: %s\n", name)
-        if err := install.Install([]string{name}, p, install.Options{Offline: *offline, Force: *force, NonInteractive: true, InstallBuilt: true}); err != nil {
-            fatalf("upgrade failed for %s: %v", name, err)
-        }
-    }
+	fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
+	printOnly := fs.Bool("printonly", false, "Print outdated packages and exit")
+	apply := fs.Bool("apply", false, "Build and install outdated AUR packages")
+	offline := fs.Bool("offline", false, "Forbid internet access while building")
+	force := fs.Bool("force", false, "Pass --force to makepkg")
+	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
+	_ = fs.Parse(args)
+	outdated, err := findOutdated()
+	if err != nil {
+		fatalf("upgrade check failed: %v", err)
+	}
+	if len(outdated) == 0 {
+		os.Exit(7)
+	}
+	if *printOnly && !*apply {
+		for _, n := range outdated {
+			fmt.Println(n)
+		}
+		return
+	}
+	// default without flags: print a plan
+	if !*apply {
+		plan, err := install.BuildPlan(outdated)
+		if err != nil {
+			fatalf("plan failed: %v", err)
+		}
+		fmt.Println("Plan:")
+		if len(plan.BuildOrder) == 0 {
+			fmt.Println("  (no AUR builds needed)")
+		} else {
+			fmt.Printf("  Build order: %s\n", strings.Join(plan.BuildOrder, ", "))
+		}
+		if len(plan.RepoMissing) > 0 {
+			fmt.Printf("  Repo deps missing: %s\n", strings.Join(plan.RepoMissing, ", "))
+			fmt.Printf("    Install: sudo pacman -S --needed %s\n", strings.Join(plan.RepoMissing, " "))
+		} else {
+			fmt.Println("  Repo deps missing: none")
+		}
+		if len(plan.Unknown) > 0 {
+			fmt.Printf("  Unknown deps: %s\n", strings.Join(plan.Unknown, ", "))
+		}
+		return
+	}
+	// apply: build and install in order
+	plan, err := install.BuildPlan(outdated)
+	if err != nil {
+		fatalf("plan failed: %v", err)
+	}
+	if *installRepoDeps && len(plan.RepoMissing) > 0 {
+		fmt.Printf("Installing missing repo deps: %s\n", strings.Join(plan.RepoMissing, ", "))
+		if err := pacman.InstallRepoDeps(plan.RepoMissing); err != nil {
+			fatalf("pacman install failed: %v", err)
+		}
+	}
+	p := paths.MustInit()
+	for _, name := range plan.BuildOrder {
+		fmt.Printf("\n==> Upgrading AUR pkg: %s\n", name)
+		if err := install.Install([]string{name}, p, install.Options{Offline: *offline, Force: *force, NonInteractive: true, InstallBuilt: true}); err != nil {
+			fatalf("upgrade failed for %s: %v", name, err)
+		}
+	}
 }
 
 func fatalf(format string, a ...any) {
