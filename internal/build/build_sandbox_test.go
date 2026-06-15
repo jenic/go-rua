@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"go-rua/internal/paths"
@@ -26,11 +27,24 @@ func TestPrefetchSourcesUsesStatic(t *testing.T) {
 	}
 	// stub sandbox to succeed; we don't validate args deeply here
 	sandbox.SetExecCommandForTests(func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("bash", "-lc", "true")
+		return exec.Command("/bin/true")
 	})
 	defer sandbox.SetExecCommandForTests(exec.Command)
 	p := paths.Paths{ConfigDir: t.TempDir(), CacheBuildDir: t.TempDir(), DataCheckedTars: t.TempDir()}
 	if err := prefetchSources(dir, p, true); err != nil {
 		t.Fatalf("prefetchSources err: %v", err)
+	}
+}
+
+func TestPrefetchSourcesFailsWhenStaticPKGBUILDGenerationFails(t *testing.T) {
+	dir := t.TempDir()
+	longLine := strings.Repeat("a", 70*1024)
+	if err := os.WriteFile(filepath.Join(dir, ".SRCINFO"), []byte(longLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := paths.Paths{ConfigDir: t.TempDir(), CacheBuildDir: t.TempDir(), DataCheckedTars: t.TempDir()}
+	err := prefetchSources(dir, p, true)
+	if err == nil || !strings.Contains(err.Error(), "generate static PKGBUILD") {
+		t.Fatalf("expected static PKGBUILD error, got %v", err)
 	}
 }

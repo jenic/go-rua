@@ -58,7 +58,7 @@ func usage() {
 	fmt.Println("  search <keywords...>                    Search AUR by name/desc")
 	fmt.Println("  info <pkg1> [pkg2 ...]                  Show AUR package info")
 	fmt.Println("  tarcheck <archive>                      Inspect built package archive (interactive)")
-	fmt.Println("  upgrade [--plan] [--devel] [--ignore=<pkg1,pkg2>]   Apply upgrades by default; --plan prints the plan")
+	fmt.Println("  upgrade [--apply] [--devel] [--ignore=<pkg1,pkg2>]  Plan upgrades by default; --apply builds and installs")
 	fmt.Println("  version                                 Show version")
 	fmt.Println()
 }
@@ -458,8 +458,7 @@ func upgradeCmd(args []string) {
 	fs.SetOutput(os.Stdout)
 	fs.Usage = upgradeUsage
 	printOnly := fs.Bool("printonly", false, "Print outdated packages and exit")
-	// Deprecated: --apply (apply is now default)
-	apply := fs.Bool("apply", false, "(deprecated) Apply upgrades; now default")
+	apply := fs.Bool("apply", false, "Build and install upgrades after review")
 	plan := fs.Bool("plan", false, "Print upgrade plan and exit")
 	devel := fs.Bool("devel", false, "Also rebuild development VCS packages (-git, -hg, -bzr, -svn, -cvs, -darcs)")
 	ignore := fs.String("ignore", "", "Comma-separated list of packages to ignore")
@@ -471,8 +470,6 @@ func upgradeCmd(args []string) {
 	if err := fs.Parse(args); err != nil {
 		return
 	}
-	// Deprecated flag consumed to avoid vet unused warning
-	_ = apply
 	outdated, nonexistent, err := findOutdated(*devel, *ignore)
 	if err != nil {
 		fatalf("upgrade check failed: %v", err)
@@ -489,8 +486,8 @@ func upgradeCmd(args []string) {
 		}
 		return
 	}
-	// --plan prints a plan; apply is default now
-	if *plan {
+	// Planning is the default; --apply is required for build/install.
+	if *plan || !*apply {
 		// Detailed outdated table
 		items, _, _ := listOutdatedDetailed(*devel, *ignore)
 		if len(items) > 0 {
@@ -538,14 +535,14 @@ func upgradeCmd(args []string) {
 	for _, name := range pl.BuildOrder {
 		fmt.Printf("\n==> Upgrading AUR pkg: %s\n", name)
 		effOffline := *offline && !*online
-		if err := installInstallFn([]string{name}, p, install.Options{Offline: effOffline, Force: *force, NonInteractive: true, InstallBuilt: true, DisableSeccomp: *noSeccomp}); err != nil {
+		if err := installInstallFn([]string{name}, p, install.Options{Offline: effOffline, Force: *force, NonInteractive: false, InstallBuilt: true, DisableSeccomp: *noSeccomp}); err != nil {
 			fatalf("upgrade failed for %s: %v", name, err)
 		}
 	}
 }
 
 func upgradeUsage() {
-	fmt.Println("Usage: go-rua upgrade [--plan] [--devel] [--ignore=<pkg1,pkg2>] [--online] [--offline] [--force] [--install-repo-deps] [--no-seccomp]")
+	fmt.Println("Usage: go-rua upgrade [--apply] [--plan] [--devel] [--ignore=<pkg1,pkg2>] [--online] [--offline] [--force] [--install-repo-deps] [--no-seccomp]")
 }
 
 func fatalf(format string, a ...any) {

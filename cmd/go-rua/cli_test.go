@@ -12,6 +12,7 @@ import (
 	"go-rua/internal/aur"
 	installpkg "go-rua/internal/install"
 	"go-rua/internal/pacman"
+	"go-rua/internal/paths"
 )
 
 type rtCLIFunc func(*http.Request) (*http.Response, error)
@@ -98,5 +99,92 @@ func TestUpgradeCmdPlanPrints(t *testing.T) {
 	out, _ := captureOut(func() { upgradeCmd([]string{"--plan"}) })
 	if !strings.Contains(out, "Plan:") || !strings.Contains(out, "Build order: foo") {
 		t.Fatalf("unexpected upgrade plan out: %q", out)
+	}
+}
+
+func TestUpgradeCmdDefaultsToPlan(t *testing.T) {
+	oldGetForeign := getForeignPkgsFn
+	oldAurInfo := aurInfoFn
+	oldVercmp := vercmpFn
+	oldIgnored := getIgnoredPkgsFn
+	oldPlan := installPlanFn
+	oldInstall := installInstallFn
+	oldSudo := pacmanSudoFn
+	defer func() {
+		getForeignPkgsFn = oldGetForeign
+		aurInfoFn = oldAurInfo
+		vercmpFn = oldVercmp
+		getIgnoredPkgsFn = oldIgnored
+		installPlanFn = oldPlan
+		installInstallFn = oldInstall
+		pacmanSudoFn = oldSudo
+	}()
+	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
+		return []pacman.ForeignPkg{{Name: "foo", Version: "1"}}, nil
+	}
+	aurInfoFn = func(names []string) ([]aur.Package, error) { return []aur.Package{{Name: "foo", Version: "2"}}, nil }
+	vercmpFn = func(a, b string) (int, error) { return -1, nil }
+	getIgnoredPkgsFn = func() ([]string, error) { return nil, nil }
+	installPlanFn = func(names []string) (installpkg.Plan, error) {
+		return installpkg.Plan{BuildOrder: names}, nil
+	}
+	pacmanSudoFn = func() string { return "sudo" }
+	installCalled := false
+	installInstallFn = func([]string, paths.Paths, installpkg.Options) error {
+		installCalled = true
+		return nil
+	}
+
+	out, _ := captureOut(func() { upgradeCmd(nil) })
+	if !strings.Contains(out, "Plan:") || !strings.Contains(out, "Build order: foo") {
+		t.Fatalf("unexpected default upgrade out: %q", out)
+	}
+	if installCalled {
+		t.Fatalf("upgrade without --apply must not install")
+	}
+}
+
+func TestUpgradeCmdApplyUsesInteractiveInstall(t *testing.T) {
+	oldGetForeign := getForeignPkgsFn
+	oldAurInfo := aurInfoFn
+	oldVercmp := vercmpFn
+	oldIgnored := getIgnoredPkgsFn
+	oldPlan := installPlanFn
+	oldInstall := installInstallFn
+	oldPaths := pathsInitFn
+	defer func() {
+		getForeignPkgsFn = oldGetForeign
+		aurInfoFn = oldAurInfo
+		vercmpFn = oldVercmp
+		getIgnoredPkgsFn = oldIgnored
+		installPlanFn = oldPlan
+		installInstallFn = oldInstall
+		pathsInitFn = oldPaths
+	}()
+	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
+		return []pacman.ForeignPkg{{Name: "foo", Version: "1"}}, nil
+	}
+	aurInfoFn = func(names []string) ([]aur.Package, error) { return []aur.Package{{Name: "foo", Version: "2"}}, nil }
+	vercmpFn = func(a, b string) (int, error) { return -1, nil }
+	getIgnoredPkgsFn = func() ([]string, error) { return nil, nil }
+	installPlanFn = func(names []string) (installpkg.Plan, error) {
+		return installpkg.Plan{BuildOrder: names}, nil
+	}
+	pathsInitFn = func() paths.Paths {
+		d := t.TempDir()
+		return paths.Paths{ConfigDir: d, CacheBuildDir: d, DataCheckedTars: d}
+	}
+	var got installpkg.Options
+	installInstallFn = func(_ []string, _ paths.Paths, opt installpkg.Options) error {
+		got = opt
+		return nil
+	}
+
+	captureOut(func() { upgradeCmd([]string{"--apply"}) })
+	if got.NonInteractive {
+		t.Fatalf("upgrade --apply must keep review interactive")
+	}
+	if !got.InstallBuilt {
+		t.Fatalf("upgrade --apply should install built artifacts")
 	}
 }

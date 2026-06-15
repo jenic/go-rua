@@ -138,6 +138,10 @@ func applySeccompDenylist() error {
 	// default allow
 	prog = append(prog, ret(_SECCOMP_RET_ALLOW))
 
+	// SockFprog.Len is a uint16 in the kernel ABI.
+	if len(prog) > 1<<16-1 {
+		return syscall.EINVAL
+	}
 	fprog := syscall.SockFprog{Len: uint16(len(prog)), Filter: &prog[0]}
 
 	// no_new_privs required before installing a filter

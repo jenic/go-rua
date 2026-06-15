@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	ll "github.com/landlock-lsm/go-landlock/landlock"
@@ -23,6 +24,26 @@ var (
 	osExitFn               = os.Exit
 )
 
+type sandboxExecConfig struct {
+	RO               []string
+	ROX              []string
+	RW               []string
+	RWX              []string
+	Env              []string
+	WorkDir          string
+	BestEffort       bool
+	UnrestrictedFS   bool
+	UnrestrictedNet  bool
+	UseBubblewrap    bool
+	AllowWeakOffline bool
+	SeccompDenylist  bool
+}
+
+type bwrapBind struct {
+	flag string
+	path string
+}
+
 // sandboxExec is invoked as a hidden subcommand: go-rua sandbox-exec <cmd> [args...]
 // It applies a Landlock ruleset (based on RUA_SANDBOX_CFG) and then execs the target.
 func sandboxExec() {
@@ -32,19 +53,7 @@ func sandboxExec() {
 		fmt.Fprintln(os.Stderr, "sandbox-exec: missing RUA_SANDBOX_CFG")
 		osExitFn(97)
 	}
-	var cfg struct {
-		RO              []string
-		ROX             []string
-		RW              []string
-		RWX             []string
-		Env             []string
-		WorkDir         string
-		BestEffort      bool
-		UnrestrictedFS  bool
-		UnrestrictedNet bool
-		UseBubblewrap   bool
-		SeccompDenylist bool
-	}
+	var cfg sandboxExecConfig
 	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "sandbox-exec: invalid config:", err)
 		osExitFn(98)
@@ -106,9 +115,16 @@ func sandboxExec() {
 
 	// Decide execution strategy: bubblewrap for net isolation if requested/available, else Landlock-only.
 	useBwrap := false
+	bwrapPath := ""
 	if cfg.UseBubblewrap {
-		if _, err := lookPathFn("bwrap"); err == nil {
+		if p, err := lookPathFn("bwrap"); err == nil {
 			useBwrap = true
+			bwrapPath = p
+		} else if !cfg.UnrestrictedNet && !cfg.AllowWeakOffline {
+			fmt.Fprintln(os.Stderr, "sandbox-exec: offline build requires bubblewrap network isolation; install bwrap or set RUA_ALLOW_WEAK_OFFLINE=1 to accept Landlock-only isolation")
+			osExitFn(103)
+		} else if !cfg.UnrestrictedNet {
+			fmt.Fprintln(os.Stderr, "warning: bubblewrap unavailable; offline build is using Landlock-only isolation without a private network namespace")
 		}
 	}
 	// Apply Landlock only when not using bubblewrap (to avoid interfering with bwrap mounts)
@@ -158,23 +174,6 @@ func sandboxExec() {
 
 	// Optionally wrap with bubblewrap for network isolation
 	if useBwrap {
-		bwargs := []string{"bwrap", "--die-with-parent", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"}
-		if !cfg.UnrestrictedNet {
-			bwargs = append([]string{"bwrap", "--die-with-parent", "--unshare-net", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"}, bwargs[4:]...)
-		}
-		// map binds
-		for _, p := range cfg.RO {
-			bwargs = append(bwargs, "--ro-bind", p, p)
-		}
-		for _, p := range cfg.ROX {
-			bwargs = append(bwargs, "--ro-bind", p, p)
-		}
-		for _, p := range cfg.RW {
-			bwargs = append(bwargs, "--bind", p, p)
-		}
-		for _, p := range cfg.RWX {
-			bwargs = append(bwargs, "--bind", p, p)
-		}
 		// Inside bwrap, re-enter this binary in seccomp-only mode so that bwrap can perform needed syscalls first.
 		self := os.Args[0]
 		if !strings.HasPrefix(self, "/") {
@@ -182,11 +181,10 @@ func sandboxExec() {
 				self = ap
 			}
 		}
-		bwargs = append(bwargs, "--", self, "sandbox-exec")
-		bwargs = append(bwargs, args...)
+		bwargs := buildBubblewrapArgs(cfg, self, args)
 		// Signal to inner invocation to only apply seccomp
 		childEnv = append(childEnv, "RUA_SANDBOX_CFG="+cfgJSON, "RUA_SECCOMP_ONLY=1")
-		if err := syscallExecFn(bwargs[0], bwargs, childEnv); err != nil {
+		if err := syscallExecFn(bwrapPath, bwargs, childEnv); err != nil {
 			fmt.Fprintln(os.Stderr, "exec failed:", err)
 			osExitFn(101)
 		}
@@ -211,15 +209,73 @@ func sandboxExec() {
 	}
 }
 
+func buildBubblewrapArgs(cfg sandboxExecConfig, self string, targetArgs []string) []string {
+	bwargs := []string{"bwrap", "--die-with-parent", "--tmpfs", "/"}
+	if !cfg.UnrestrictedNet {
+		bwargs = append(bwargs, "--unshare-net")
+	}
+	bwargs = append(bwargs, "--proc", "/proc", "--dev", "/dev", "--dir", "/tmp", "--dir", "/var", "--dir", "/var/tmp")
+
+	var binds []bwrapBind
+	addBinds := func(flag string, paths []string) {
+		for _, p := range paths {
+			p = filepath.Clean(p)
+			if p == "." || p == "/" || p == "" || !filepath.IsAbs(p) {
+				continue
+			}
+			binds = append(binds, bwrapBind{flag: flag, path: p})
+		}
+	}
+	addBinds("--ro-bind", slices.Concat([]string{"/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", self}, cfg.RO, cfg.ROX))
+	addBinds("--bind", slices.Concat(cfg.RW, cfg.RWX))
+
+	for _, d := range parentDirsForBinds(binds) {
+		bwargs = append(bwargs, "--dir", d)
+	}
+	selected := map[string]bwrapBind{}
+	order := []string{}
+	for _, b := range binds {
+		if cur, ok := selected[b.path]; ok {
+			if cur.flag == "--ro-bind" && b.flag == "--bind" {
+				selected[b.path] = b
+			}
+			continue
+		}
+		selected[b.path] = b
+		order = append(order, b.path)
+	}
+	for _, path := range order {
+		b := selected[path]
+		bwargs = append(bwargs, b.flag, b.path, b.path)
+	}
+	bwargs = append(bwargs, "--", self, "sandbox-exec")
+	return append(bwargs, targetArgs...)
+}
+
+func parentDirsForBinds(binds []bwrapBind) []string {
+	seen := map[string]struct{}{}
+	for _, b := range binds {
+		for d := filepath.Dir(b.path); d != "." && d != "/" && d != ""; d = filepath.Dir(d) {
+			seen[d] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for d := range seen {
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		di := strings.Count(out[i], string(os.PathSeparator))
+		dj := strings.Count(out[j], string(os.PathSeparator))
+		if di != dj {
+			return di < dj
+		}
+		return out[i] < out[j]
+	})
+	return out
+}
+
 // applyLandlock constructs and installs a Landlock ruleset based on cfg.
-func applyLandlock(cfg struct {
-	RO, ROX, RW, RWX                            []string
-	Env                                         []string
-	WorkDir                                     string
-	BestEffort, UnrestrictedFS, UnrestrictedNet bool
-	UseBubblewrap                               bool
-	SeccompDenylist                             bool
-}) error {
+func applyLandlock(cfg sandboxExecConfig) error {
 	// Determine the superset of filesystem accesses we might grant.
 	handled := ll.AccessFSReadFile | ll.AccessFSReadDir |
 		ll.AccessFSExecute | ll.AccessFSWriteFile | ll.AccessFSRemoveFile |

@@ -22,6 +22,8 @@ func TestMustInitNoMakepkgChecksAndDirs(t *testing.T) {
 		}
 		if fi, err := os.Stat(v); err != nil || !fi.IsDir() {
 			t.Fatalf("expected dir exists: %q: %v", v, err)
+		} else if got := fi.Mode().Perm(); got != 0o700 {
+			t.Fatalf("expected private dir permissions for %q, got %o", v, got)
 		}
 	}
 
@@ -29,14 +31,20 @@ func TestMustInitNoMakepkgChecksAndDirs(t *testing.T) {
 	r := p.ReviewDir("pkgbase1")
 	if fi, err := os.Stat(r); err != nil || !fi.IsDir() {
 		t.Fatalf("ReviewDir should create dir: %v", err)
+	} else if got := fi.Mode().Perm(); got != 0o700 {
+		t.Fatalf("ReviewDir permissions = %o, want 700", got)
 	}
 	b := p.BuildDir("pkgbase1")
 	if fi, err := os.Stat(b); err != nil || !fi.IsDir() {
 		t.Fatalf("BuildDir should create dir: %v", err)
+	} else if got := fi.Mode().Perm(); got != 0o700 {
+		t.Fatalf("BuildDir permissions = %o, want 700", got)
 	}
 	c := p.CheckedTarsDir("pkgbase1")
 	if fi, err := os.Stat(c); err != nil || !fi.IsDir() {
 		t.Fatalf("CheckedTarsDir should create dir: %v", err)
+	} else if got := fi.Mode().Perm(); got != 0o700 {
+		t.Fatalf("CheckedTarsDir permissions = %o, want 700", got)
 	}
 }
 

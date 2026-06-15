@@ -50,6 +50,11 @@ func TestInstallNonInteractiveFlowStagesAndInstalls(t *testing.T) {
 
 	// Stub build directory runner to create an artifact file we can stage
 	buildDirectoryFn = func(dir string, p paths.Paths, offline, force bool, seccomp bool) error {
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			return err
+		} else if got := fi.Mode().Perm(); got != 0o700 {
+			t.Fatalf("build directory permissions = %o, want 700", got)
+		}
 		// create a fake artifact
 		f := filepath.Join(dir, "app-1-1-x86_64.pkg.tar.zst")
 		if err := os.WriteFile(f, []byte("pkg"), 0o644); err != nil {

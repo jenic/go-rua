@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -61,14 +63,7 @@ func TestBuildEnvDefaultPATHWhenOmitted(t *testing.T) {
 func TestApplyLandlockStub(t *testing.T) {
 	// Ensure paths exist or not; stub ignores real enforcement
 	d := t.TempDir()
-	cfg := struct {
-		RO, ROX, RW, RWX                            []string
-		Env                                         []string
-		WorkDir                                     string
-		BestEffort, UnrestrictedFS, UnrestrictedNet bool
-		UseBubblewrap                               bool
-		SeccompDenylist                             bool
-	}{
+	cfg := sandboxExecConfig{
 		RO:  []string{"/etc", d},
 		ROX: []string{"/usr", "/bin"},
 		RW:  []string{"/dev/null"},
@@ -145,8 +140,26 @@ func TestSandboxExecBubblewrapPath(t *testing.T) {
 	cfg := `{"Env":["PATH=/bin"],"UseBubblewrap":true,"UnrestrictedNet":false}`
 	syscallExecFn = func(prog string, args []string, env []string) error {
 		called = true
+		if prog != "/usr/bin/bwrap" {
+			t.Fatalf("expected resolved bwrap path, got %q", prog)
+		}
 		if args[0] != "bwrap" {
 			t.Fatalf("expected bwrap, got %v", args)
+		}
+		if !containsArg(args, "--unshare-net") {
+			t.Fatalf("expected --unshare-net in bwrap args: %v", args)
+		}
+		if containsSubsequence(args, "--ro-bind", "/", "/") {
+			t.Fatalf("must not bind host root into bwrap sandbox: %v", args)
+		}
+		if !containsSubsequence(args, "--tmpfs", "/") {
+			t.Fatalf("expected tmpfs root in bwrap args: %v", args)
+		}
+		if !containsSubsequence(args, "--ro-bind", "/usr", "/usr") {
+			t.Fatalf("expected explicit /usr bind in bwrap args: %v", args)
+		}
+		if !containsSubsequence(args, "sandbox-exec", "/bin/true") || !containsArg(args, "--") {
+			t.Fatalf("expected inner sandbox-exec after --, got %v", args)
 		}
 		foundSeccomp := false
 		foundCfg := false
@@ -180,16 +193,34 @@ func TestSandboxExecBubblewrapPath(t *testing.T) {
 	}
 }
 
+func TestSandboxExecBubblewrapUnavailableFailsClosedForOffline(t *testing.T) {
+	oldLook := lookPathFn
+	lookPathFn = func(f string) (string, error) {
+		if f == "bwrap" {
+			return "", errors.New("not found")
+		}
+		return f, nil
+	}
+	defer func() { lookPathFn = oldLook }()
+	oldExit := osExitFn
+	osExitFn = func(c int) { panic(fmt.Sprintf("exit:%d", c)) }
+	defer func() { osExitFn = oldExit }()
+	oldArgs := os.Args
+	os.Args = []string{"go-rua", "sandbox-exec", "/bin/true"}
+	defer func() { os.Args = oldArgs }()
+	t.Setenv("RUA_SANDBOX_CFG", `{"Env":["PATH=/bin"],"UseBubblewrap":true,"UnrestrictedNet":false}`)
+
+	defer func() {
+		if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), "exit:103") {
+			t.Fatalf("expected exit 103, got %v", r)
+		}
+	}()
+	sandboxExec()
+}
+
 func TestSandboxExecLandlockAndSeccomp(t *testing.T) {
 	oldAL := applyLandlockFn
-	applyLandlockFn = func(_ struct {
-		RO, ROX, RW, RWX                            []string
-		Env                                         []string
-		WorkDir                                     string
-		BestEffort, UnrestrictedFS, UnrestrictedNet bool
-		UseBubblewrap                               bool
-		SeccompDenylist                             bool
-	}) error {
+	applyLandlockFn = func(_ sandboxExecConfig) error {
 		return nil
 	}
 	defer func() { applyLandlockFn = oldAL }()
@@ -208,4 +239,32 @@ func TestSandboxExecLandlockAndSeccomp(t *testing.T) {
 	cfg := `{"Env":["PATH=/bin"],"UnrestrictedFS":false,"UseBubblewrap":false,"SeccompDenylist":true}`
 	t.Setenv("RUA_SANDBOX_CFG", cfg)
 	sandboxExec()
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSubsequence(args []string, want ...string) bool {
+	if len(want) == 0 || len(args) < len(want) {
+		return false
+	}
+	for i := 0; i <= len(args)-len(want); i++ {
+		ok := true
+		for j := range want {
+			if args[i+j] != want[j] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }

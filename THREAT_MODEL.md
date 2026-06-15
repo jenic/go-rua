@@ -104,10 +104,10 @@ Builds are offline by default. The main build runs `makepkg -f` in a sandbox wit
 - Minimal environment pass-through.
 - Build outputs directed into the build directory.
 - Landlock filesystem restrictions.
-- Bubblewrap network isolation with `--unshare-net` when offline mode requests it and bubblewrap is available.
+- Bubblewrap network isolation with `--unshare-net` for offline builds by default.
 - A seccomp denylist for selected high-risk syscalls unless disabled with `--no-seccomp`.
 
-Landlock limits filesystem access but does not provide network isolation. Bubblewrap provides stronger network isolation when available. If bubblewrap is unavailable or disabled, network isolation may be weaker.
+Landlock limits filesystem access but does not provide network isolation. Offline builds require bubblewrap by default; users who explicitly set `RUA_ALLOW_WEAK_OFFLINE=1` with `RUA_NO_BWRAP=1` accept weaker Landlock-only isolation without a private network namespace.
 
 ### Archive Review
 
@@ -140,10 +140,10 @@ Privileged pacman operations are outside the sandbox. Installing a package is th
 - Offline-by-default main builds.
 - Network-enabled prefetch separated from offline build.
 - Sandboxed execution wrapper with explicit filesystem access rules.
-- Bubblewrap network namespace isolation for offline builds when available.
+- Bubblewrap network namespace isolation required for offline builds unless the explicit weak-offline override is set.
 - Seccomp denylist for selected risky syscalls.
 - Minimal environment construction for sandboxed commands.
-- GPG home read access only for signature verification when present.
+- The main build sandbox does not mount the user's real GPG home.
 - Build artifacts filtered by expected split package names where possible.
 - Interactive archive inspection before staging.
 - Staging under `checked_tars` before optional pacman installation.
@@ -154,26 +154,26 @@ Privileged pacman operations are outside the sandbox. Installing a package is th
 - Source prefetch has network access by design.
 - `--online` allows network access during the main build.
 - Landlock alone does not guarantee network isolation.
-- Bubblewrap is optional and may be unavailable or disabled with `RUA_NO_BWRAP=1`.
+- Offline builds can run with Landlock-only isolation only when the user explicitly sets `RUA_ALLOW_WEAK_OFFLINE=1` and disables bubblewrap.
 - Seccomp is a denylist, not a complete syscall policy.
 - `--no-seccomp` disables the seccomp mitigation.
 - Sandboxing depends on kernel and tool correctness.
 - Trusted tools such as `makepkg`, `tar`, `git`, `shellcheck`, and `namcap` process untrusted input.
 - Source URL spoofing detection is conservative and does not implement a full Unicode confusables skeleton.
 - PKGBUILD source parsing is best-effort and non-executing; dynamic source arrays may require manual review.
-- Allowed filesystem paths may expose data needed by legitimate builds, such as selected GPG material.
+- Allowed filesystem paths may expose data needed by legitimate builds; local `wrap_args.d` policy can expand this access.
 - `wrap_args.d` can intentionally expand sandbox access and should be treated as part of local policy.
 - `tarcheck` does not deeply analyze binary behavior, service activation, package metadata side effects, or all install hook behavior.
 - A malicious package installed with pacman can persist, modify system files, add users/services/hooks, or execute later as part of normal package behavior.
 
 ## Operational Guidance
 
-- Prefer `install --plan` and `upgrade --plan` before building or applying changes.
+- Prefer `install --plan` before building or applying changes. `upgrade` plans by default; use `upgrade --apply` only after reviewing the plan.
 - Review AUR diffs before continuing, especially after updates.
 - Treat source URL warnings as high-risk review items; compare the displayed host to the IDNA/Punycode form and codepoint details.
 - Treat unknown dependencies, virtual providers, and unexpected repo dependency suggestions as suspicious until understood.
 - Keep the default offline build behavior unless a package genuinely requires `--online`.
-- Avoid disabling bubblewrap or seccomp unless debugging a specific failure.
+- Avoid disabling bubblewrap or seccomp unless debugging a specific failure. If accepting weak offline isolation, treat that build as having no guaranteed network isolation.
 - Inspect `.INSTALL` scripts, executable files, SUID/SGID files, service files, timers, hooks, and unexpected filesystem paths.
 - Be cautious with packages that fetch code during build, use opaque binary blobs, or run large custom scripts.
 - Do not install staged artifacts if review results are unclear.
@@ -181,8 +181,6 @@ Privileged pacman operations are outside the sandbox. Installing a package is th
 
 ## Future Hardening Ideas
 
-- Warn loudly when offline builds cannot use bubblewrap network isolation.
-- Add a mode that requires bubblewrap for offline builds.
 - Record review decisions and artifact hashes in staging metadata.
 - Expand archive review to highlight systemd units, pacman hooks, tmpfiles, sysusers, setcap usage, world-writable paths, and privileged paths.
 - Provide clearer summaries of source URLs, checksums, VCS sources, and install scripts before build.

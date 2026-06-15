@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"go-rua/internal/aur"
@@ -147,7 +148,7 @@ func TestInstallInteractiveRequiresURLWarningAck(t *testing.T) {
 	}
 }
 
-func TestInstallNonInteractiveContinuesWithURLWarnings(t *testing.T) {
+func TestInstallNonInteractiveFailsWithURLWarnings(t *testing.T) {
 	oldRun, oldRunC := runFn, runCFn
 	oldBuild, oldTar := buildDirectoryFn, tarCheck
 	oldAudit, oldFormat := sourceAuditFn, formatSourceAuditFn
@@ -193,10 +194,11 @@ func TestInstallNonInteractiveContinuesWithURLWarnings(t *testing.T) {
 	}
 	tarCheck = func(_ string) error { return nil }
 
-	if err := Install([]string{"pkg"}, p, Options{NonInteractive: true, InstallBuilt: false}); err != nil {
-		t.Fatalf("Install noninteractive error: %v", err)
+	err := Install([]string{"pkg"}, p, Options{NonInteractive: true, InstallBuilt: false})
+	if err == nil || !strings.Contains(err.Error(), "source URL audit warnings") {
+		t.Fatalf("expected URL warning error, got %v", err)
 	}
-	if buildCalls != 1 {
-		t.Fatalf("expected noninteractive build to continue, got %d calls", buildCalls)
+	if buildCalls != 0 {
+		t.Fatalf("expected noninteractive build to stop, got %d calls", buildCalls)
 	}
 }

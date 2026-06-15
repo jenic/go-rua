@@ -3,9 +3,9 @@ package build
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -43,17 +43,28 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool
 		fmt.Sprintf("BUILDDIR=%s", dir),
 	}
 
-	// allow gnupg reads for signature verification if present
-	gnupg := os.Getenv("GNUPGHOME")
 	ro := []string{"/etc"}
 	rox := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
 	rwx := []string{dir}
-	if gnupg != "" {
-		ro = append(ro, gnupg)
-	} else if home, _ := os.UserHomeDir(); home != "" {
-		ro = append(ro, filepath.Join(home, ".gnupg"))
-	}
 
+	// Prefer bubblewrap to enforce network isolation when offline, unless disabled
+	useBwrap := false
+	allowWeakOffline := false
+	if v := os.Getenv("RUA_ALWAYS_BWRAP"); v == "1" || strings.ToLower(v) == "true" {
+		useBwrap = true
+	} else if offline {
+		if v := os.Getenv("RUA_ALLOW_WEAK_OFFLINE"); v == "1" || strings.ToLower(v) == "true" {
+			allowWeakOffline = true
+		}
+		if v := os.Getenv("RUA_NO_BWRAP"); v == "1" || strings.ToLower(v) == "true" {
+			if !allowWeakOffline {
+				return fmt.Errorf("offline build requires bubblewrap network isolation; unset RUA_NO_BWRAP or set RUA_ALLOW_WEAK_OFFLINE=1 to accept Landlock-only isolation")
+			}
+			useBwrap = false
+		} else {
+			useBwrap = true
+		}
+	}
 	// If offline, prefetch sources using .SRCINFO/static PKGBUILD, then build offline
 	if offline {
 		if err := prefetchSources(dir, p, seccomp); err != nil {
@@ -70,31 +81,20 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool
 
 	// FAKEROOT workaround similar to rua
 	args = append(args, "-f")
-
-	// Prefer bubblewrap to enforce network isolation when offline, unless disabled
-	useBwrap := false
-	if v := os.Getenv("RUA_ALWAYS_BWRAP"); v == "1" || strings.ToLower(v) == "true" {
-		useBwrap = true
-	} else if offline {
-		if v := os.Getenv("RUA_NO_BWRAP"); v == "1" || strings.ToLower(v) == "true" {
-			useBwrap = false
-		} else {
-			useBwrap = true
-		}
-	}
 	// Allow user-defined binds from wrap_args.d
 	roAdd, roxAdd, rwAdd, rwxAdd := readWrapArgs(p.ConfigDir)
 
 	cfg := sandbox.Config{
-		RO:              append(ro, roAdd...),
-		ROX:             append(rox, roxAdd...),
-		RW:              rwAdd,
-		RWX:             append(rwx, rwxAdd...),
-		Env:             envs,
-		WorkDir:         dir,
-		UnrestrictedNet: !offline,
-		UseBubblewrap:   useBwrap,
-		SeccompDenylist: seccomp,
+		RO:               append(ro, roAdd...),
+		ROX:              append(rox, roxAdd...),
+		RW:               rwAdd,
+		RWX:              append(rwx, rwxAdd...),
+		Env:              envs,
+		WorkDir:          dir,
+		UnrestrictedNet:  !offline,
+		UseBubblewrap:    useBwrap,
+		AllowWeakOffline: allowWeakOffline,
+		SeccompDenylist:  seccomp,
 	}
 	return sandbox.Run(cfg, args)
 }
@@ -116,20 +116,72 @@ func RunShell(dir string) error {
 
 // Simple helper to copy directory contents (used for build staging)
 func CopyTree(src, dst string) error {
-	// Use rsync-like behavior via tar | tar to avoid external deps
-	if err := os.MkdirAll(dst, 0o755); err != nil {
+	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err
 	}
-	// fallback: cp -a if available
-	if _, err := exec.LookPath("cp"); err == nil {
-		cmd := exec.Command("bash", "-c", fmt.Sprintf("shopt -s dotglob nullglob && cp -a '%s'/* '%s'/", escape(src), escape(dst)))
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		return cmd.Run()
+	if err := os.Chmod(dst, 0o700); err != nil {
+		return err
 	}
-	return fmt.Errorf("copy not implemented; please ensure 'cp' exists")
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode()
+		if mode&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			_ = os.Remove(target)
+			return os.Symlink(link, target)
+		}
+		if d.IsDir() {
+			return os.MkdirAll(target, mode.Perm())
+		}
+		if !mode.IsRegular() {
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := copyRegularFile(path, target, mode.Perm()); err != nil {
+			return err
+		}
+		return os.Chtimes(target, info.ModTime(), info.ModTime())
+	})
 }
 
-func escape(s string) string { return strings.ReplaceAll(s, "'", "'\\''") }
+func copyRegularFile(src, dst string, perm fs.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(dst, perm)
+}
 
 // prefetchSources downloads sources ahead of an offline build using .SRCINFO
 // If .SRCINFO exists, generate a minimal static PKGBUILD and run `makepkg -f --verifysource -p PKGBUILD.static`
@@ -154,9 +206,10 @@ func prefetchSources(dir string, p paths.Paths, seccomp bool) error {
 	// If .SRCINFO present, generate PKGBUILD.static
 	if _, err := os.Stat(filepath.Join(dir, ".SRCINFO")); err == nil {
 		static := filepath.Join(dir, "PKGBUILD.static")
-		if err := writeStaticPKGBUILDFromSRCINFO(dir, static); err == nil {
-			args = append(args, "-p", "PKGBUILD.static")
+		if err := writeStaticPKGBUILDFromSRCINFO(dir, static); err != nil {
+			return fmt.Errorf("generate static PKGBUILD from .SRCINFO: %w", err)
 		}
+		args = append(args, "-p", "PKGBUILD.static")
 	}
 	cfg := sandbox.Config{
 		RO:              ro,
@@ -197,6 +250,9 @@ func writeStaticPKGBUILDFromSRCINFO(dir, dst string) error {
 			strings.HasPrefix(key, "source") || strings.HasSuffix(key, "sums") || strings.HasPrefix(key, "validpgpkeys") {
 			m[key] = append(m[key], val)
 		}
+	}
+	if err := sc.Err(); err != nil {
+		return err
 	}
 	// Helper: array assignment
 	arr := func(name string, vals []string) string {

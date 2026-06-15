@@ -82,7 +82,10 @@ func getenvDefault(k, def string) string {
 }
 
 func mustMkdirAll(p string) {
-	if err := os.MkdirAll(p, 0o755); err != nil {
+	if err := os.MkdirAll(p, 0o700); err != nil {
+		panic(err)
+	}
+	if err := os.Chmod(p, 0o700); err != nil {
 		panic(err)
 	}
 }

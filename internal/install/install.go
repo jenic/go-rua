@@ -130,8 +130,14 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 			auditReport, auditErr := sourceAuditFn(reviewDir)
 			if auditErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: source URL audit failed for %s: %v\n", pkgbase, auditErr)
+				if opt.NonInteractive {
+					return fmt.Errorf("source URL audit failed for %s in noninteractive mode: %w", pkgbase, auditErr)
+				}
 			} else if auditReport.HasWarnings() {
 				fmt.Fprint(os.Stderr, formatSourceAuditFn(auditReport))
+				if opt.NonInteractive {
+					return fmt.Errorf("source URL audit warnings for %s require interactive acknowledgement", pkgbase)
+				}
 			}
 
 			if !opt.NonInteractive {
@@ -216,7 +222,7 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 		BUILD:
 			buildDirPath := p.BuildDir(pkgbase)
 			_ = os.RemoveAll(buildDirPath)
-			if err := os.MkdirAll(buildDirPath, 0o755); err != nil {
+			if err := os.MkdirAll(buildDirPath, 0o700); err != nil {
 				return err
 			}
 			if err := build.CopyTree(reviewDir, buildDirPath); err != nil {

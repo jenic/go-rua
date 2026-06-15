@@ -61,26 +61,42 @@ func TestWriteStaticPKGBUILDFromSRCINFO(t *testing.T) {
 	}
 }
 
-func TestEscape(t *testing.T) {
-	in := "a'b'c"
-	got := escape(in)
-	if strings.Contains(got, "'") && got != "a'\\''b'\\''c" {
-		t.Fatalf("unexpected escape: %q", got)
-	}
-}
-
-func TestCopyTreeFallbackWhenNoCp(t *testing.T) {
-	// Create source with a file
+func TestCopyTreeCopiesDotfilesAndSymlinks(t *testing.T) {
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "dst")
-	_ = os.WriteFile(filepath.Join(src, "f.txt"), []byte("hello"), 0o644)
-	// Temporarily remove PATH so cp cannot be found.
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", "")
-	err := CopyTree(src, dst)
-	if err == nil {
-		t.Fatalf("expected error when cp not found")
+	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	// Restore PATH for next test
-	t.Setenv("PATH", oldPath)
+	if err := os.WriteFile(filepath.Join(src, ".dot"), []byte("dot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "sub", "f.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("sub/f.txt", filepath.Join(src, "link")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "")
+	if err := CopyTree(src, dst); err != nil {
+		t.Fatalf("CopyTree error: %v", err)
+	}
+	if fi, err := os.Stat(dst); err != nil || !fi.IsDir() {
+		t.Fatalf("destination root not created: %v", err)
+	} else if got := fi.Mode().Perm(); got != 0o700 {
+		t.Fatalf("destination root permissions = %o, want 700", got)
+	}
+	if fi, err := os.Stat(filepath.Join(dst, "sub")); err != nil || !fi.IsDir() {
+		t.Fatalf("subdirectory not copied: %v", err)
+	} else if got := fi.Mode().Perm(); got != 0o755 {
+		t.Fatalf("subdirectory permissions = %o, want copied 755", got)
+	}
+	if b, err := os.ReadFile(filepath.Join(dst, ".dot")); err != nil || string(b) != "dot" {
+		t.Fatalf("dotfile not copied: %q %v", string(b), err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dst, "sub", "f.txt")); err != nil || string(b) != "hello" {
+		t.Fatalf("nested file not copied: %q %v", string(b), err)
+	}
+	if link, err := os.Readlink(filepath.Join(dst, "link")); err != nil || link != "sub/f.txt" {
+		t.Fatalf("symlink not preserved: %q %v", link, err)
+	}
 }
