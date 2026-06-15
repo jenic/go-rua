@@ -3,6 +3,7 @@ package pacman
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -118,5 +119,90 @@ exit 0
 	t.Setenv("RUA_SUDO_COMMAND", "")
 	if s := SudoCommand(); s == "" {
 		t.Fatalf("SudoCommand default empty")
+	}
+}
+
+func TestCommandWrapperFailures(t *testing.T) {
+	bin := t.TempDir()
+	writeExe(t, bin, "vercmp", `exit 42`)
+	writeExe(t, bin, "pacman", `exit 42`)
+	writeExe(t, bin, "pacman-conf", `exit 42`)
+	writeExe(t, bin, "sudofake", `exit 42`)
+
+	t.Setenv("PATH", bin)
+	t.Setenv("RUA_SUDO_COMMAND", filepath.Join(bin, "sudofake"))
+
+	cases := []struct {
+		name    string
+		run     func() error
+		wantErr string
+	}{
+		{
+			name: "vercmp",
+			run: func() error {
+				_, err := Vercmp("1", "2")
+				return err
+			},
+			wantErr: "vercmp failed",
+		},
+		{
+			name: "check missing",
+			run: func() error {
+				_, err := CheckMissing([]string{"dep"})
+				return err
+			},
+			wantErr: "pacman -T failed",
+		},
+		{
+			name: "foreign packages",
+			run: func() error {
+				_, err := GetForeignPackages()
+				return err
+			},
+			wantErr: "pacman -Q --foreign failed",
+		},
+		{
+			name: "ignored packages",
+			run: func() error {
+				_, err := GetIgnoredPackages()
+				return err
+			},
+			wantErr: "pacman-conf IgnorePkg failed",
+		},
+		{
+			name:    "repo deps install",
+			run:     func() error { return InstallRepoDeps([]string{"dep"}) },
+			wantErr: "exit status 42",
+		},
+		{
+			name:    "local install",
+			run:     func() error { return InstallLocal([]string{"/tmp/pkg.pkg.tar.zst"}) },
+			wantErr: "exit status 42",
+		},
+		{
+			name:    "local install asdeps",
+			run:     func() error { return InstallLocalWithMode([]string{"/tmp/pkg.pkg.tar.zst"}, true) },
+			wantErr: "exit status 42",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestVercmpRejectsUnexpectedOutput(t *testing.T) {
+	bin := t.TempDir()
+	writeExe(t, bin, "vercmp", `echo wat`)
+	t.Setenv("PATH", bin)
+
+	_, err := Vercmp("1", "2")
+	if err == nil || !strings.Contains(err.Error(), `unexpected vercmp output: "wat"`) {
+		t.Fatalf("error = %v, want unexpected output error", err)
 	}
 }

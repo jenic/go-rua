@@ -39,10 +39,10 @@ if [ "$1" = "-Si" ]; then
 fi
 exit 1
 `)
-	os.Setenv("PATH", bin)
+	t.Setenv("PATH", bin)
 
 	// Mock AUR Info: first app, then aurbar (batched with non-AUR dep)
-	aur.SetHTTPClientForTests(&http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+	t.Cleanup(aur.SetHTTPClientForTests(&http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("type") == "info" {
 			q := r.URL.Query()["arg[]"]
 			if len(q) == 1 && q[0] == "app" {
@@ -58,7 +58,7 @@ exit 1
 			}
 		}
 		return mresp(404, ""), nil
-	})})
+	})}))
 
 	plan, err := BuildPlan([]string{"app"})
 	if err != nil {

@@ -28,7 +28,7 @@ func TestJoinMulti(t *testing.T) {
 
 func TestSearchANDAndInfo(t *testing.T) {
 	// Mock AUR RPC responses
-	httpClient = &http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+	t.Cleanup(SetHTTPClientForTests(&http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
 		q := r.URL.Query()
 		ttype := q.Get("type")
 		if ttype == "search" {
@@ -43,7 +43,7 @@ func TestSearchANDAndInfo(t *testing.T) {
 			return mockResponse(200, body), nil
 		}
 		return mockResponse(404, ""), nil
-	})}
+	})}))
 
 	res, err := SearchAND([]string{"foo", "pkg"})
 	if err != nil {

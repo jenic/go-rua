@@ -21,8 +21,10 @@ func respD(status int, body string) *http.Response {
 }
 
 func TestInstallDepthAsDepsFlagPerGroup(t *testing.T) {
+	restoreInstallSeams(t)
+
 	// AUR info: root depends on dep (both AUR)
-	aur.SetHTTPClientForTests(&http.Client{Transport: rtDFunc(func(r *http.Request) (*http.Response, error) {
+	t.Cleanup(aur.SetHTTPClientForTests(&http.Client{Transport: rtDFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("type") == "info" {
 			q := r.URL.Query()["arg[]"]
 			if len(q) == 1 && q[0] == "root" {
@@ -34,7 +36,7 @@ func TestInstallDepthAsDepsFlagPerGroup(t *testing.T) {
 			return respD(200, body), nil
 		}
 		return respD(404, ""), nil
-	})})
+	})}))
 
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())

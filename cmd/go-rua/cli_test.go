@@ -37,7 +37,43 @@ func captureOut(f func()) (string, string) {
 	return string(b1), string(b2)
 }
 
+func restoreCLISeams(t *testing.T) {
+	t.Helper()
+	oldAurInfo, oldAurSearchAND := aurInfoFn, aurSearchANDFn
+	oldPlan, oldInstall := installPlanFn, installInstallFn
+	oldSummary, oldFormatSummary := summarizeAURFn, formatSummaryFn
+	oldSudo, oldRepoDeps := pacmanSudoFn, pacmanInstallRepoDepsFn
+	oldForeign, oldVercmp, oldIgnored := getForeignPkgsFn, vercmpFn, getIgnoredPkgsFn
+	oldTarcheck, oldShellcheck, oldNamcap := tarcheckFn, shellcheckFn, namcapFn
+	oldPaths, oldPathsNoMakepkg := pathsInitFn, pathsInitNoMakepkgFn
+	oldBuildDir := buildDirectoryCLIFn
+	oldSourceAudit, oldFormatSourceAudit := sourceAuditDirFn, formatSourceAuditFn
+	t.Cleanup(func() {
+		aurInfoFn = oldAurInfo
+		aurSearchANDFn = oldAurSearchAND
+		installPlanFn = oldPlan
+		installInstallFn = oldInstall
+		summarizeAURFn = oldSummary
+		formatSummaryFn = oldFormatSummary
+		pacmanSudoFn = oldSudo
+		pacmanInstallRepoDepsFn = oldRepoDeps
+		getForeignPkgsFn = oldForeign
+		vercmpFn = oldVercmp
+		getIgnoredPkgsFn = oldIgnored
+		tarcheckFn = oldTarcheck
+		shellcheckFn = oldShellcheck
+		namcapFn = oldNamcap
+		pathsInitFn = oldPaths
+		pathsInitNoMakepkgFn = oldPathsNoMakepkg
+		buildDirectoryCLIFn = oldBuildDir
+		sourceAuditDirFn = oldSourceAudit
+		formatSourceAuditFn = oldFormatSourceAudit
+	})
+}
+
 func TestSearchCmd(t *testing.T) {
+	restoreCLISeams(t)
+
 	// Stub AUR search
 	aurSearchANDFn = func(terms []string) ([]aur.Package, error) {
 		return []aur.Package{{Name: "foo", Version: "1", Description: "hello"}}, nil
@@ -49,6 +85,8 @@ func TestSearchCmd(t *testing.T) {
 }
 
 func TestInfoCmdTextAndJSON(t *testing.T) {
+	restoreCLISeams(t)
+
 	aurInfoFn = func(names []string) ([]aur.Package, error) {
 		return []aur.Package{{
 			Name: "pkg", Version: "1", Description: "desc", URL: "u", Maintainer: "m",
@@ -69,21 +107,8 @@ func TestInfoCmdTextAndJSON(t *testing.T) {
 }
 
 func TestUpgradeCmdPlanPrints(t *testing.T) {
-	// save and restore seams
-	oldGetForeign := getForeignPkgsFn
-	oldAurInfo := aurInfoFn
-	oldVercmp := vercmpFn
-	oldIgnored := getIgnoredPkgsFn
-	oldPlan := installPlanFn
-	oldSudo := pacmanSudoFn
-	defer func() {
-		getForeignPkgsFn = oldGetForeign
-		aurInfoFn = oldAurInfo
-		vercmpFn = oldVercmp
-		getIgnoredPkgsFn = oldIgnored
-		installPlanFn = oldPlan
-		pacmanSudoFn = oldSudo
-	}()
+	restoreCLISeams(t)
+
 	// Stub findOutdated deps via seams used inside helpers
 	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
 		return []pacman.ForeignPkg{{Name: "foo", Version: "1"}}, nil
@@ -103,22 +128,8 @@ func TestUpgradeCmdPlanPrints(t *testing.T) {
 }
 
 func TestUpgradeCmdDefaultsToPlan(t *testing.T) {
-	oldGetForeign := getForeignPkgsFn
-	oldAurInfo := aurInfoFn
-	oldVercmp := vercmpFn
-	oldIgnored := getIgnoredPkgsFn
-	oldPlan := installPlanFn
-	oldInstall := installInstallFn
-	oldSudo := pacmanSudoFn
-	defer func() {
-		getForeignPkgsFn = oldGetForeign
-		aurInfoFn = oldAurInfo
-		vercmpFn = oldVercmp
-		getIgnoredPkgsFn = oldIgnored
-		installPlanFn = oldPlan
-		installInstallFn = oldInstall
-		pacmanSudoFn = oldSudo
-	}()
+	restoreCLISeams(t)
+
 	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
 		return []pacman.ForeignPkg{{Name: "foo", Version: "1"}}, nil
 	}
@@ -145,22 +156,8 @@ func TestUpgradeCmdDefaultsToPlan(t *testing.T) {
 }
 
 func TestUpgradeCmdApplyUsesInteractiveInstall(t *testing.T) {
-	oldGetForeign := getForeignPkgsFn
-	oldAurInfo := aurInfoFn
-	oldVercmp := vercmpFn
-	oldIgnored := getIgnoredPkgsFn
-	oldPlan := installPlanFn
-	oldInstall := installInstallFn
-	oldPaths := pathsInitFn
-	defer func() {
-		getForeignPkgsFn = oldGetForeign
-		aurInfoFn = oldAurInfo
-		vercmpFn = oldVercmp
-		getIgnoredPkgsFn = oldIgnored
-		installPlanFn = oldPlan
-		installInstallFn = oldInstall
-		pathsInitFn = oldPaths
-	}()
+	restoreCLISeams(t)
+
 	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
 		return []pacman.ForeignPkg{{Name: "foo", Version: "1"}}, nil
 	}

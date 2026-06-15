@@ -23,14 +23,16 @@ func respI(status int, body string) *http.Response {
 }
 
 func TestInstallInteractiveOkPath(t *testing.T) {
+	restoreInstallSeams(t)
+
 	// Minimal AUR info
-	aur.SetHTTPClientForTests(&http.Client{Transport: rtIFunc2(func(r *http.Request) (*http.Response, error) {
+	t.Cleanup(aur.SetHTTPClientForTests(&http.Client{Transport: rtIFunc2(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("type") == "info" {
 			body := `{"version":5,"type":"multiinfo","resultcount":1,"results":[{"Name":"pkg","Version":"1","PackageBase":"pkg"}]}`
 			return respI(200, body), nil
 		}
 		return respI(404, ""), nil
-	})})
+	})}))
 
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
@@ -77,27 +79,15 @@ func TestInstallInteractiveOkPath(t *testing.T) {
 }
 
 func TestInstallInteractiveRequiresURLWarningAck(t *testing.T) {
-	oldRun, oldRunC, oldRunCQ := runFn, runCFn, runCQFn
-	oldShell, oldBuild, oldTar := runShell, buildDirectoryFn, tarCheck
-	oldAudit, oldFormat := sourceAuditFn, formatSourceAuditFn
-	defer func() {
-		runFn = oldRun
-		runCFn = oldRunC
-		runCQFn = oldRunCQ
-		runShell = oldShell
-		buildDirectoryFn = oldBuild
-		tarCheck = oldTar
-		sourceAuditFn = oldAudit
-		formatSourceAuditFn = oldFormat
-	}()
+	restoreInstallSeams(t)
 
-	aur.SetHTTPClientForTests(&http.Client{Transport: rtIFunc2(func(r *http.Request) (*http.Response, error) {
+	t.Cleanup(aur.SetHTTPClientForTests(&http.Client{Transport: rtIFunc2(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("type") == "info" {
 			body := `{"version":5,"type":"multiinfo","resultcount":1,"results":[{"Name":"pkg","Version":"1","PackageBase":"pkg"}]}`
 			return respI(200, body), nil
 		}
 		return respI(404, ""), nil
-	})})
+	})}))
 
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
@@ -149,25 +139,15 @@ func TestInstallInteractiveRequiresURLWarningAck(t *testing.T) {
 }
 
 func TestInstallNonInteractiveFailsWithURLWarnings(t *testing.T) {
-	oldRun, oldRunC := runFn, runCFn
-	oldBuild, oldTar := buildDirectoryFn, tarCheck
-	oldAudit, oldFormat := sourceAuditFn, formatSourceAuditFn
-	defer func() {
-		runFn = oldRun
-		runCFn = oldRunC
-		buildDirectoryFn = oldBuild
-		tarCheck = oldTar
-		sourceAuditFn = oldAudit
-		formatSourceAuditFn = oldFormat
-	}()
+	restoreInstallSeams(t)
 
-	aur.SetHTTPClientForTests(&http.Client{Transport: rtIFunc2(func(r *http.Request) (*http.Response, error) {
+	t.Cleanup(aur.SetHTTPClientForTests(&http.Client{Transport: rtIFunc2(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("type") == "info" {
 			body := `{"version":5,"type":"multiinfo","resultcount":1,"results":[{"Name":"pkg","Version":"1","PackageBase":"pkg"}]}`
 			return respI(200, body), nil
 		}
 		return respI(404, ""), nil
-	})})
+	})}))
 
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())

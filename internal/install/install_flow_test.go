@@ -22,14 +22,16 @@ func resp(status int, body string) *http.Response {
 }
 
 func TestInstallNonInteractiveFlowStagesAndInstalls(t *testing.T) {
+	restoreInstallSeams(t)
+
 	// Arrange AUR info for single target "app" with no extra AUR deps
-	aur.SetHTTPClientForTests(&http.Client{Transport: rtIFunc(func(r *http.Request) (*http.Response, error) {
+	t.Cleanup(aur.SetHTTPClientForTests(&http.Client{Transport: rtIFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("type") == "info" {
 			body := `{"version":5,"type":"multiinfo","resultcount":1,"results":[{"Name":"app","Version":"1","PackageBase":"app"}]}`
 			return resp(200, body), nil
 		}
 		return resp(404, ""), nil
-	})})
+	})}))
 
 	// Create fake repo and build directories with isolated XDG
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

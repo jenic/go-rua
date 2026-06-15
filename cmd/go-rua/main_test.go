@@ -36,6 +36,8 @@ func TestIsDevelPkg(t *testing.T) {
 }
 
 func TestFindOutdatedAndListDetailed(t *testing.T) {
+	restoreCLISeams(t)
+
 	// reset seams in case other tests modified them
 	getForeignPkgsFn = pacman.GetForeignPackages
 	vercmpFn = pacman.Vercmp
@@ -59,17 +61,17 @@ if [ "$1" = "$2" ]; then echo 0; else echo -1; fi
 	writeExe(t, bin, "pacman-conf", `
 if [ "$1" = "IgnorePkg" ]; then echo "ignored"; exit 0; fi
 `)
-	os.Setenv("PATH", bin)
+	t.Setenv("PATH", bin)
 
 	// Mock AUR Info
-	aur.SetHTTPClientForTests(&http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+	t.Cleanup(aur.SetHTTPClientForTests(&http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("type") == "info" {
 			// Return info for foo, devpkg-git only; ghost missing
 			body := `{"version":5,"type":"multiinfo","resultcount":2,"results":[{"Name":"foo","Version":"2.0","PackageBase":"foo"},{"Name":"devpkg-git","Version":"1.0","PackageBase":"devpkg-git"}]}`
 			return mockResp(200, body), nil
 		}
 		return mockResp(404, ""), nil
-	})})
+	})}))
 
 	// Should mark foo outdated (1.0 -> 2.0), devpkg-git outdated only when devel=true, ghost nonexistent
 	outdated, nonexistent, err := findOutdated(true, "")

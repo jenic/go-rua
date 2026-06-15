@@ -6,6 +6,24 @@ import (
 	"testing"
 )
 
+func restoreInstallSeams(t *testing.T) {
+	t.Helper()
+	oldRun, oldRunC, oldRunCQ := runFn, runCFn, runCQFn
+	oldShell, oldBuild, oldTar := runShell, buildDirectoryFn, tarCheck
+	oldPacman, oldAudit, oldFormat := pacmanInstallLocalWithMode, sourceAuditFn, formatSourceAuditFn
+	t.Cleanup(func() {
+		runFn = oldRun
+		runCFn = oldRunC
+		runCQFn = oldRunCQ
+		runShell = oldShell
+		buildDirectoryFn = oldBuild
+		tarCheck = oldTar
+		pacmanInstallLocalWithMode = oldPacman
+		sourceAuditFn = oldAudit
+		formatSourceAuditFn = oldFormat
+	})
+}
+
 func TestParsePkgNameFromTar(t *testing.T) {
 	cases := map[string]string{
 		"foo-1.2-3-x86_64.pkg.tar.zst":     "foo",

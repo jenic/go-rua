@@ -32,6 +32,8 @@ func TestHelpCmdTopics(t *testing.T) {
 }
 
 func TestTarcheckCmd(t *testing.T) {
+	restoreCLISeams(t)
+
 	// Make a temp file to pass arg check
 	f, _ := os.CreateTemp("", "pkg-*.pkg.tar.zst")
 	f.Close()
@@ -47,6 +49,8 @@ func TestTarcheckCmd(t *testing.T) {
 }
 
 func TestInstallCmdPlanOnly(t *testing.T) {
+	restoreCLISeams(t)
+
 	// Stub AUR info and plan
 	oldInfo, oldPlan := aurInfoFn, installPlanFn
 	oldSum, oldFmt := summarizeAURFn, formatSummaryFn
@@ -77,6 +81,8 @@ func TestInstallCmdPlanOnly(t *testing.T) {
 }
 
 func TestUpgradeCmdPrintOnlyFlag(t *testing.T) {
+	restoreCLISeams(t)
+
 	// Prepare getForeign and AUR info for one outdated and one nonexistent
 	oldGF, oldAI, oldVC, oldGI := getForeignPkgsFn, aurInfoFn, vercmpFn, getIgnoredPkgsFn
 	defer func() { getForeignPkgsFn = oldGF; aurInfoFn = oldAI; vercmpFn = oldVC; getIgnoredPkgsFn = oldGI }()
@@ -84,12 +90,12 @@ func TestUpgradeCmdPrintOnlyFlag(t *testing.T) {
 		return []pacman.ForeignPkg{{Name: "foo", Version: "1"}, {Name: "ghost", Version: "1"}}, nil
 	}
 	// use HTTP client to return info for only foo
-	aur.SetHTTPClientForTests(&http.Client{Transport: rtCLIFunc2(func(r *http.Request) (*http.Response, error) {
+	t.Cleanup(aur.SetHTTPClientForTests(&http.Client{Transport: rtCLIFunc2(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("type") == "info" {
 			return mrespCLI2(200, `{"version":5,"type":"multiinfo","resultcount":1,"results":[{"Name":"foo","Version":"2"}]}`), nil
 		}
 		return mrespCLI2(404, ""), nil
-	})})
+	})}))
 	aurInfoFn = aur.Info
 	vercmpFn = func(a, b string) (int, error) {
 		if a == b {
@@ -106,6 +112,8 @@ func TestUpgradeCmdPrintOnlyFlag(t *testing.T) {
 }
 
 func TestBuilddirShellcheckNamcapWrappers(t *testing.T) {
+	restoreCLISeams(t)
+
 	oldPaths, oldPathsNoMakepkg := pathsInitFn, pathsInitNoMakepkgFn
 	defer func() {
 		pathsInitFn = oldPaths
@@ -154,6 +162,8 @@ func TestBuilddirShellcheckNamcapWrappers(t *testing.T) {
 }
 
 func TestBuilddirPrintsSourceAuditWarnings(t *testing.T) {
+	restoreCLISeams(t)
+
 	oldPaths := pathsInitFn
 	oldBD := buildDirectoryCLIFn
 	oldAudit := sourceAuditDirFn
@@ -185,6 +195,8 @@ func TestBuilddirPrintsSourceAuditWarnings(t *testing.T) {
 }
 
 func TestInstallCmdInstallRepoDeps(t *testing.T) {
+	restoreCLISeams(t)
+
 	// Stub plan with repo missing
 	oldPlan, oldPac, oldInfo, oldSum, oldFmt, oldInstall := installPlanFn, pacmanInstallRepoDepsFn, aurInfoFn, summarizeAURFn, formatSummaryFn, installInstallFn
 	oldPaths := pathsInitFn

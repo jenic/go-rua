@@ -21,12 +21,14 @@ func respIM(status int, body string) *http.Response {
 }
 
 func TestInstallInteractiveDiffAndShellBranches(t *testing.T) {
-	aur.SetHTTPClientForTests(&http.Client{Transport: rtIMFunc(func(r *http.Request) (*http.Response, error) {
+	restoreInstallSeams(t)
+
+	t.Cleanup(aur.SetHTTPClientForTests(&http.Client{Transport: rtIMFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("type") == "info" {
 			return respIM(200, `{"version":5,"type":"multiinfo","resultcount":1,"results":[{"Name":"pkg","Version":"1","PackageBase":"pkg"}]}`), nil
 		}
 		return respIM(404, ""), nil
-	})})
+	})}))
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())

@@ -21,12 +21,14 @@ func respA(status int, body string) *http.Response {
 }
 
 func TestInstallAsDepsTrueOverridesDepth(t *testing.T) {
-	aur.SetHTTPClientForTests(&http.Client{Transport: rtAFunc(func(r *http.Request) (*http.Response, error) {
+	restoreInstallSeams(t)
+
+	t.Cleanup(aur.SetHTTPClientForTests(&http.Client{Transport: rtAFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Query().Get("type") == "info" {
 			return respA(200, `{"version":5,"type":"multiinfo","resultcount":1,"results":[{"Name":"solo","Version":"1","PackageBase":"solo"}]}`), nil
 		}
 		return respA(404, ""), nil
-	})})
+	})}))
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())

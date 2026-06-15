@@ -97,6 +97,43 @@ func TestAuditDirDetectsPunycodeHost(t *testing.T) {
 	}
 }
 
+func TestAuditSourcesChecksSCPLikeHosts(t *testing.T) {
+	report := auditSources([]Source{{
+		Key:      "source",
+		Value:    "git@github.com:owner/repo.git",
+		Location: ".SRCINFO:1",
+	}})
+	if report.HasWarnings() {
+		t.Fatalf("expected no warnings for safe scp-like host, got %#v", report)
+	}
+
+	report = auditSources([]Source{{
+		Key:      "source",
+		Value:    "git@exаmple.com:owner/repo.git",
+		Location: ".SRCINFO:2",
+	}})
+	if len(report.Findings) != 1 {
+		t.Fatalf("expected one finding for Unicode scp-like host, got %#v", report.Findings)
+	}
+	if report.Findings[0].Host != "exаmple.com" {
+		t.Fatalf("unexpected finding host: %q", report.Findings[0].Host)
+	}
+}
+
+func TestSCPLikeHostRejectsInvalidForms(t *testing.T) {
+	tests := []string{
+		"git@example.com:owner repo.git",
+		"https://example.com:443/owner/repo.git",
+		"localhost:owner/repo.git",
+		"git@example.com/owner:repo.git",
+	}
+	for _, raw := range tests {
+		if got := scpLikeHost(raw); got != "" {
+			t.Fatalf("scpLikeHost(%q) = %q, want empty", raw, got)
+		}
+	}
+}
+
 func TestAuditDirChecksSRCINFOAndPKGBUILDWhenBothPresent(t *testing.T) {
 	dir := t.TempDir()
 	srcinfo := "source = pkg::https://example.com/a.tar.gz\n"
