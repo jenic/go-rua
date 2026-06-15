@@ -85,7 +85,7 @@ For `install`, go-rua clones or updates AUR Git repositories into `~/.config/rua
 
 Interactive review can show local or upstream diffs, run `shellcheck`, run `namcap`, or open a sandboxed shell. Approval in this phase only means "continue to build"; it does not establish that the package is safe.
 
-go-rua audits source URLs from `.SRCINFO`, or simple literal `PKGBUILD` source arrays as a fallback, before continuing. Hostnames with Unicode, IDN/Punycode differences, invisible/control characters, or mixed-script labels are highlighted. Interactive review requires acknowledging these warnings before continuing.
+go-rua audits source URLs from `.SRCINFO` and simple literal `PKGBUILD` source arrays before continuing. Hostnames with Unicode, IDN/Punycode differences, invisible/control characters, or mixed-script labels are highlighted. Differences between `.SRCINFO` and parsed `PKGBUILD` sources are also highlighted because stale metadata can hide source URLs from review. Interactive review requires acknowledging these warnings before continuing.
 
 ### Build Directory
 

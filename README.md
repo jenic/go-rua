@@ -39,7 +39,7 @@ Sandboxing
 - Bubblewrap (optional): When `--offline`, go-rua prefers bubblewrap if available to enforce network isolation with `--unshare-net`, while mapping Landlock-like binds. Disable with `RUA_NO_BWRAP=1`.
 - Seccomp denylist (optional, default on): A minimal seccomp-bpf denylist blocks risky syscalls (ptrace, bpf, userfaultfd, kexec, perf_event_open, name/open_by_handle, setns, mount family, pivot_root, module load, keyctl, process_vm_* , fanotify_init, chroot, reboot, iopl/ioperm, swapon/swapoff). Disable with `--no-seccomp` for debugging.
 - Offline builds: By default, go-rua builds offline. It first runs a prefetch step (`makepkg -f --verifysource`) with network allowed, using a static PKGBUILD generated from `.SRCINFO` when available, then builds with network disabled. Use `--online` to allow network during the build.
-- Source URL audit: Before `install` and `builddir` builds, go-rua reviews `.SRCINFO` or simple literal `PKGBUILD` source entries for Unicode/IDN hostname spoofing risks. Interactive installs require acknowledging warnings with `U` before continuing.
+- Source URL audit: Before `install` and `builddir` builds, go-rua reviews `.SRCINFO` and simple literal `PKGBUILD` source entries for Unicode/IDN hostname spoofing risks and warns when the two source lists differ. Interactive installs require acknowledging warnings with `U` before continuing.
 
 Typical flows
 

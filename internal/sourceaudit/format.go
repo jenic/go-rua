@@ -33,6 +33,9 @@ func FormatReport(report Report) string {
 	for _, msg := range report.Incomplete {
 		fmt.Fprintf(&b, "  %s\n", msg)
 	}
+	for _, msg := range report.Mismatches {
+		fmt.Fprintf(&b, "  %s\n", msg)
+	}
 	b.WriteString("  Review these source URLs carefully; Unicode characters can spoof trusted domains.\n")
 	return b.String()
 }

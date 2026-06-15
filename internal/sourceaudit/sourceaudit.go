@@ -22,6 +22,7 @@ type Report struct {
 	Sources    []Source
 	Findings   []Finding
 	Incomplete []string
+	Mismatches []string
 }
 
 type Source struct {
@@ -41,39 +42,101 @@ type Finding struct {
 }
 
 func (r Report) HasWarnings() bool {
-	return len(r.Findings) > 0 || len(r.Incomplete) > 0
+	return len(r.Findings) > 0 || len(r.Incomplete) > 0 || len(r.Mismatches) > 0
 }
 
-// AuditDir extracts source entries from .SRCINFO, or from PKGBUILD as a
-// best-effort fallback, and flags Unicode/IDN hostname spoofing risks.
+// AuditDir extracts source entries from .SRCINFO and PKGBUILD when present,
+// then flags Unicode/IDN hostname spoofing risks and source metadata drift.
 func AuditDir(dir string) (Report, error) {
+	var srcinfoSources []Source
+	var pkgbuildSources []Source
+	var incomplete []string
+	hasSRCINFO := false
+	hasPKGBUILD := false
+
 	if sources, err := sourcesFromSRCINFO(filepath.Join(dir, ".SRCINFO")); err == nil {
-		return auditSources(sources), nil
+		srcinfoSources = sources
+		hasSRCINFO = true
 	} else if !os.IsNotExist(err) {
 		return Report{}, err
 	}
-	sources, incomplete, err := sourcesFromPKGBUILD(filepath.Join(dir, "PKGBUILD"))
-	if err != nil {
+
+	if sources, messages, err := sourcesFromPKGBUILD(filepath.Join(dir, "PKGBUILD")); err == nil {
+		pkgbuildSources = sources
+		incomplete = messages
+		hasPKGBUILD = true
+	} else if !os.IsNotExist(err) {
 		return Report{}, err
 	}
+
+	if !hasSRCINFO && !hasPKGBUILD {
+		return Report{}, fmt.Errorf("no .SRCINFO or PKGBUILD found in %s", dir)
+	}
+
+	sources := append(append([]Source{}, srcinfoSources...), pkgbuildSources...)
 	report := auditSources(sources)
 	report.Incomplete = append(report.Incomplete, incomplete...)
+	if hasSRCINFO && hasPKGBUILD {
+		report.Mismatches = append(report.Mismatches, compareSourceSets(srcinfoSources, pkgbuildSources)...)
+	}
 	return report, nil
 }
 
 func auditSources(sources []Source) Report {
 	report := Report{Sources: sources}
+	seenFindings := map[string]struct{}{}
 	for _, src := range sources {
 		raw := normalizeSourceURL(src.Value)
 		host := sourceHost(raw)
 		if host == "" {
 			continue
 		}
+		key := raw + "\x00" + src.Location
+		if _, ok := seenFindings[key]; ok {
+			continue
+		}
+		seenFindings[key] = struct{}{}
 		if finding, ok := auditHost(src, raw, host); ok {
 			report.Findings = append(report.Findings, finding)
 		}
 	}
 	return report
+}
+
+func compareSourceSets(srcinfoSources, pkgbuildSources []Source) []string {
+	srcinfoByURL := sourcesByNormalizedURL(srcinfoSources)
+	pkgbuildByURL := sourcesByNormalizedURL(pkgbuildSources)
+	var out []string
+	for raw, sources := range pkgbuildByURL {
+		if _, ok := srcinfoByURL[raw]; ok {
+			continue
+		}
+		for _, src := range sources {
+			out = append(out, fmt.Sprintf("PKGBUILD source not represented in .SRCINFO: %s %s", src.Location, src.Value))
+		}
+	}
+	for raw, sources := range srcinfoByURL {
+		if _, ok := pkgbuildByURL[raw]; ok {
+			continue
+		}
+		for _, src := range sources {
+			out = append(out, fmt.Sprintf(".SRCINFO source not represented in PKGBUILD literal parsing: %s %s", src.Location, src.Value))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sourcesByNormalizedURL(sources []Source) map[string][]Source {
+	out := map[string][]Source{}
+	for _, src := range sources {
+		raw := normalizeSourceURL(src.Value)
+		if raw == "" {
+			continue
+		}
+		out[raw] = append(out[raw], src)
+	}
+	return out
 }
 
 func sourcesFromSRCINFO(path string) ([]Source, error) {
