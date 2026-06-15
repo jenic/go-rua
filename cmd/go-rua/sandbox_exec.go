@@ -38,6 +38,7 @@ func sandboxExec() {
 		RW              []string
 		RWX             []string
 		Env             []string
+		WorkDir         string
 		BestEffort      bool
 		UnrestrictedFS  bool
 		UnrestrictedNet bool
@@ -93,6 +94,14 @@ func sandboxExec() {
 			osExitFn(101)
 		}
 		return
+	}
+
+	// If a working directory is specified, change to it before applying isolation.
+	if cfg.WorkDir != "" {
+		if err := os.Chdir(cfg.WorkDir); err != nil {
+			fmt.Fprintln(os.Stderr, "sandbox-exec: chdir failed:", err)
+			osExitFn(96)
+		}
 	}
 
 	// Decide execution strategy: bubblewrap for net isolation if requested/available, else Landlock-only.
@@ -176,7 +185,7 @@ func sandboxExec() {
 		bwargs = append(bwargs, "--", self, "sandbox-exec")
 		bwargs = append(bwargs, args...)
 		// Signal to inner invocation to only apply seccomp
-		childEnv = append(childEnv, "RUA_SECCOMP_ONLY=1")
+		childEnv = append(childEnv, "RUA_SANDBOX_CFG="+cfgJSON, "RUA_SECCOMP_ONLY=1")
 		if err := syscallExecFn(bwargs[0], bwargs, childEnv); err != nil {
 			fmt.Fprintln(os.Stderr, "exec failed:", err)
 			osExitFn(101)
@@ -206,6 +215,7 @@ func sandboxExec() {
 func applyLandlock(cfg struct {
 	RO, ROX, RW, RWX                            []string
 	Env                                         []string
+	WorkDir                                     string
 	BestEffort, UnrestrictedFS, UnrestrictedNet bool
 	UseBubblewrap                               bool
 	SeccompDenylist                             bool
@@ -298,11 +308,14 @@ func buildEnv(allowed []string) []string {
 			continue
 		}
 		val, ok := os.LookupEnv(e)
-		if !ok {
-			val = ""
-		}
 		if e == "PATH" {
 			hasPATH = true
+			// Fallback to a sane default when PATH is missing or empty in parent env
+			if !ok || val == "" {
+				val = "/usr/bin:/bin"
+			}
+		} else if !ok {
+			val = ""
 		}
 		out = append(out, e+"="+val)
 	}

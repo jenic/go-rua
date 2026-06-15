@@ -12,7 +12,7 @@ import (
 
 func TestBuildDirectoryMissingPKGBUILD(t *testing.T) {
 	dir := t.TempDir()
-	p := paths.MustInitNoMakepkgChecks()
+	p := paths.Paths{ConfigDir: t.TempDir(), CacheBuildDir: t.TempDir(), DataCheckedTars: t.TempDir()}
 	if err := BuildDirectory(dir, p, true, false, false); err == nil {
 		t.Fatalf("expected error when PKGBUILD missing")
 	}
@@ -29,7 +29,7 @@ func TestPrefetchSourcesUsesStatic(t *testing.T) {
 		return exec.Command("bash", "-lc", "true")
 	})
 	defer sandbox.SetExecCommandForTests(exec.Command)
-	p := paths.MustInitNoMakepkgChecks()
+	p := paths.Paths{ConfigDir: t.TempDir(), CacheBuildDir: t.TempDir(), DataCheckedTars: t.TempDir()}
 	if err := prefetchSources(dir, p, true); err != nil {
 		t.Fatalf("prefetchSources err: %v", err)
 	}

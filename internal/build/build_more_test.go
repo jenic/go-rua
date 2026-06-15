@@ -15,7 +15,7 @@ func TestBuildDirectoryFlagsAndBwrapEnv(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "PKGBUILD"), []byte("pkgname=('x')\npkgver=1\npkgrel=1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p := paths.MustInitNoMakepkgChecks()
+	p := paths.Paths{ConfigDir: t.TempDir(), CacheBuildDir: t.TempDir(), DataCheckedTars: t.TempDir()}
 	// Stub execution to just succeed
 	sandbox.SetExecCommandForTests(func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("bash", "-lc", "true")

@@ -95,7 +95,7 @@ func TestUpgradeCmdPlanPrints(t *testing.T) {
 	}
 	pacmanSudoFn = func() string { return "sudo" }
 
-	out, _ := captureOut(func() { upgradeCmd([]string{}) })
+	out, _ := captureOut(func() { upgradeCmd([]string{"--plan"}) })
 	if !strings.Contains(out, "Plan:") || !strings.Contains(out, "Build order: foo") {
 		t.Fatalf("unexpected upgrade plan out: %q", out)
 	}

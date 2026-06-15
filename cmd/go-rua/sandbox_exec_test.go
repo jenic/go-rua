@@ -24,12 +24,47 @@ func TestBuildEnv(t *testing.T) {
 	}
 }
 
+func TestBuildEnvDefaultPATHWhenMissing(t *testing.T) {
+	// Simulate missing/empty PATH in parent env
+	t.Setenv("PATH", "")
+	env := buildEnv([]string{"PATH"})
+	has := func(kv string) bool {
+		for _, e := range env {
+			if e == kv {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("PATH=/usr/bin:/bin") {
+		t.Fatalf("expected default PATH when missing, got %v", env)
+	}
+}
+
+func TestBuildEnvDefaultPATHWhenOmitted(t *testing.T) {
+	// When PATH not listed at all, builder should append default PATH
+	t.Setenv("PATH", "")
+	env := buildEnv([]string{"HOME"})
+	has := func(prefix string) bool {
+		for _, e := range env {
+			if e == "PATH=/usr/bin:/bin" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("PATH=/usr/bin:/bin") {
+		t.Fatalf("expected default PATH when omitted, got %v", env)
+	}
+}
+
 func TestApplyLandlockStub(t *testing.T) {
 	// Ensure paths exist or not; stub ignores real enforcement
 	d := t.TempDir()
 	cfg := struct {
 		RO, ROX, RW, RWX                            []string
 		Env                                         []string
+		WorkDir                                     string
 		BestEffort, UnrestrictedFS, UnrestrictedNet bool
 		UseBubblewrap                               bool
 		SeccompDenylist                             bool
@@ -107,19 +142,27 @@ func TestSandboxExecBubblewrapPath(t *testing.T) {
 	defer func() { lookPathFn = oldLook }()
 	called := false
 	oldSys := syscallExecFn
+	cfg := `{"Env":["PATH=/bin"],"UseBubblewrap":true,"UnrestrictedNet":false}`
 	syscallExecFn = func(prog string, args []string, env []string) error {
 		called = true
 		if args[0] != "bwrap" {
 			t.Fatalf("expected bwrap, got %v", args)
 		}
-		found := false
+		foundSeccomp := false
+		foundCfg := false
 		for _, e := range env {
 			if e == "RUA_SECCOMP_ONLY=1" {
-				found = true
+				foundSeccomp = true
+			}
+			if e == "RUA_SANDBOX_CFG="+cfg {
+				foundCfg = true
 			}
 		}
-		if !found {
+		if !foundSeccomp {
 			t.Fatalf("expected RUA_SECCOMP_ONLY in env")
+		}
+		if !foundCfg {
+			t.Fatalf("expected RUA_SANDBOX_CFG in env")
 		}
 		return nil
 	}
@@ -130,7 +173,6 @@ func TestSandboxExecBubblewrapPath(t *testing.T) {
 	oldArgs := os.Args
 	os.Args = []string{"go-rua", "sandbox-exec", "/bin/true"}
 	defer func() { os.Args = oldArgs }()
-	cfg := `{"Env":["PATH=/bin"],"UseBubblewrap":true,"UnrestrictedNet":false}`
 	t.Setenv("RUA_SANDBOX_CFG", cfg)
 	sandboxExec()
 	if !called {
@@ -143,6 +185,7 @@ func TestSandboxExecLandlockAndSeccomp(t *testing.T) {
 	applyLandlockFn = func(_ struct {
 		RO, ROX, RW, RWX                            []string
 		Env                                         []string
+		WorkDir                                     string
 		BestEffort, UnrestrictedFS, UnrestrictedNet bool
 		UseBubblewrap                               bool
 		SeccompDenylist                             bool

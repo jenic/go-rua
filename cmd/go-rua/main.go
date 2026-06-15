@@ -48,14 +48,14 @@ func usage() {
 	fmt.Println("  go-rua [command] [options]")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  builddir [--offline] [--force] [dir]    Build a PKGBUILD directory in sandbox")
+	fmt.Println("  builddir [--online] [--force] [dir]     Build a PKGBUILD directory in sandbox (offline by default)")
 	fmt.Println("  shellcheck [file|dir]                   Run shellcheck for PKGBUILD (sandboxed)")
 	fmt.Println("  namcap [file|dir]                       Run namcap for PKGBUILD (sandboxed)")
-	fmt.Println("  install [--offline] [--force] [--install] [--asdeps] [--plan] <pkgs..>  Clone AUR repos, review, build, stage, optional install")
+	fmt.Println("  install [--online] [--force] [--install] [--asdeps] [--plan] <pkgs..>  Clone AUR repos, review, build, stage, optional install")
 	fmt.Println("  search <keywords...>                    Search AUR by name/desc")
 	fmt.Println("  info <pkg1> [pkg2 ...]                  Show AUR package info")
 	fmt.Println("  tarcheck <archive>                      Inspect built package archive (interactive)")
-	fmt.Println("  upgrade [--printonly|--apply] [--devel] [--ignore=<pkg1,pkg2>]   Print or apply upgrades for AUR packages")
+	fmt.Println("  upgrade [--plan] [--devel] [--ignore=<pkg1,pkg2>]   Apply upgrades by default; --plan prints the plan")
 	fmt.Println("  version                                 Show version")
 	fmt.Println()
 }
@@ -155,7 +155,8 @@ func builddirCmd(args []string) {
 	fs := flag.NewFlagSet("builddir", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
 	fs.Usage = builddirUsage
-	offline := fs.Bool("offline", false, "Forbid internet access while building")
+	offline := fs.Bool("offline", true, "Forbid internet access while building (default)")
+	online := fs.Bool("online", false, "Allow internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
 	forceBwrap := fs.Bool("bwrap", false, "Force bubblewrap isolation even when not offline")
@@ -176,13 +177,14 @@ func builddirCmd(args []string) {
 	if *forceBwrap {
 		_ = os.Setenv("RUA_ALWAYS_BWRAP", "1")
 	}
-	if err := buildDirectoryCLIFn(abs, p, *offline, *force, !*noSeccomp); err != nil {
+	effOffline := *offline && !*online
+	if err := buildDirectoryCLIFn(abs, p, effOffline, *force, !*noSeccomp); err != nil {
 		fatalf("build failed: %v", err)
 	}
 }
 
 func builddirUsage() {
-	fmt.Println("Usage: go-rua builddir [--offline] [--force] [--no-seccomp] [--bwrap] [dir]")
+	fmt.Println("Usage: go-rua builddir [--online] [--offline] [--force] [--no-seccomp] [--bwrap] [dir]")
 }
 
 func shellcheckCmd(args []string) {
@@ -243,7 +245,8 @@ func installCmd(args []string) {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
 	fs.Usage = installUsage
-	offline := fs.Bool("offline", false, "Forbid internet access while building")
+	offline := fs.Bool("offline", true, "Forbid internet access while building (default)")
+	online := fs.Bool("online", false, "Allow internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	asdeps := fs.Bool("asdeps", false, "Install built packages as dependencies")
 	planOnly := fs.Bool("plan", false, "Print build plan and exit")
@@ -310,17 +313,19 @@ func installCmd(args []string) {
 			}
 		}
 	}
+	effOffline := *offline && !*online
 	if err := (func() error {
-		return installInstallFn(pkgs, p, install.Options{Offline: *offline, Force: *force, InstallBuilt: *installBuilt, DisableSeccomp: *noSeccomp, AsDeps: *asdeps})
+		return installInstallFn(pkgs, p, install.Options{Offline: effOffline, Force: *force, InstallBuilt: *installBuilt, DisableSeccomp: *noSeccomp, AsDeps: *asdeps})
 	})(); err != nil {
 		fatalf("install failed: %v", err)
 	}
 }
 
 func installUsage() {
-	fmt.Println("Usage: go-rua install [--offline] [--force] [--install] [--asdeps] [--plan] [--install-repo-deps] [--no-seccomp] <pkgs...>")
+	fmt.Println("Usage: go-rua install [--online] [--offline] [--force] [--install] [--asdeps] [--plan] [--install-repo-deps] [--no-seccomp] <pkgs...>")
 	fmt.Println("Options:")
-	fmt.Println("  --offline             Forbid internet access while building")
+	fmt.Println("  --offline             Forbid internet access while building (default)")
+	fmt.Println("  --online              Allow internet access while building")
 	fmt.Println("  --force               Pass --force to makepkg")
 	fmt.Println("  --install             Install built artifacts after staging")
 	fmt.Println("  --asdeps              Install built packages as dependencies")
@@ -445,16 +450,21 @@ func upgradeCmd(args []string) {
 	fs.SetOutput(os.Stdout)
 	fs.Usage = upgradeUsage
 	printOnly := fs.Bool("printonly", false, "Print outdated packages and exit")
-	apply := fs.Bool("apply", false, "Build and install outdated AUR packages")
+	// Deprecated: --apply (apply is now default)
+	apply := fs.Bool("apply", false, "(deprecated) Apply upgrades; now default")
+	plan := fs.Bool("plan", false, "Print upgrade plan and exit")
 	devel := fs.Bool("devel", false, "Also rebuild development VCS packages (-git, -hg, -bzr, -svn, -cvs, -darcs)")
 	ignore := fs.String("ignore", "", "Comma-separated list of packages to ignore")
-	offline := fs.Bool("offline", false, "Forbid internet access while building")
+	offline := fs.Bool("offline", true, "Forbid internet access while building (default)")
+	online := fs.Bool("online", false, "Allow internet access while building")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
 	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
 	if err := fs.Parse(args); err != nil {
 		return
 	}
+	// Deprecated flag consumed to avoid vet unused warning
+	_ = apply
 	outdated, nonexistent, err := findOutdated(*devel, *ignore)
 	if err != nil {
 		fatalf("upgrade check failed: %v", err)
@@ -462,7 +472,7 @@ func upgradeCmd(args []string) {
 	if len(outdated) == 0 && len(nonexistent) == 0 {
 		os.Exit(7)
 	}
-	if *printOnly && !*apply {
+	if *printOnly {
 		for _, n := range outdated {
 			fmt.Println(n)
 		}
@@ -471,8 +481,8 @@ func upgradeCmd(args []string) {
 		}
 		return
 	}
-	// default without flags: print a plan
-	if !*apply {
+	// --plan prints a plan; apply is default now
+	if *plan {
 		// Detailed outdated table
 		items, _, _ := listOutdatedDetailed(*devel, *ignore)
 		if len(items) > 0 {
@@ -481,52 +491,53 @@ func upgradeCmd(args []string) {
 				fmt.Printf("  %s  %s -> %s\n", it.Name, it.Local, it.Latest)
 			}
 		}
-		plan, err := installPlanFn(outdated)
+		pl, err := installPlanFn(outdated)
 		if err != nil {
 			fatalf("plan failed: %v", err)
 		}
 		fmt.Println(term.Bold("Plan:"))
-		if len(plan.BuildOrder) == 0 {
+		if len(pl.BuildOrder) == 0 {
 			fmt.Println("  (no AUR builds needed)")
 		} else {
-			fmt.Printf("  Build order: %s\n", strings.Join(plan.BuildOrder, ", "))
+			fmt.Printf("  Build order: %s\n", strings.Join(pl.BuildOrder, ", "))
 		}
-		if len(plan.RepoMissing) > 0 {
-			fmt.Printf("  %s %s\n", term.Yellow("Repo deps missing:"), strings.Join(plan.RepoMissing, ", "))
-			fmt.Printf("    Install: %s pacman -S --needed %s\n", pacmanSudoFn(), strings.Join(plan.RepoMissing, " "))
+		if len(pl.RepoMissing) > 0 {
+			fmt.Printf("  %s %s\n", term.Yellow("Repo deps missing:"), strings.Join(pl.RepoMissing, ", "))
+			fmt.Printf("    Install: %s pacman -S --needed %s\n", pacmanSudoFn(), strings.Join(pl.RepoMissing, " "))
 		} else {
 			fmt.Println("  Repo deps missing: none")
 		}
-		if len(plan.Unknown) > 0 {
-			fmt.Printf("  Unknown deps: %s\n", strings.Join(plan.Unknown, ", "))
+		if len(pl.Unknown) > 0 {
+			fmt.Printf("  Unknown deps: %s\n", strings.Join(pl.Unknown, ", "))
 		}
 		if len(nonexistent) > 0 {
 			fmt.Printf("  Note: %d installed packages not found in AUR: %s\n", len(nonexistent), strings.Join(nonexistent, ", "))
 		}
 		return
 	}
-	// apply: build and install in order
-	plan, err := installPlanFn(outdated)
+	// apply/default: build and install in order
+	pl, err := installPlanFn(outdated)
 	if err != nil {
 		fatalf("plan failed: %v", err)
 	}
-	if *installRepoDeps && len(plan.RepoMissing) > 0 {
-		fmt.Printf("Installing missing repo deps: %s\n", strings.Join(plan.RepoMissing, ", "))
-		if err := pacmanInstallRepoDepsFn(plan.RepoMissing); err != nil {
+	if *installRepoDeps && len(pl.RepoMissing) > 0 {
+		fmt.Printf("Installing missing repo deps: %s\n", strings.Join(pl.RepoMissing, ", "))
+		if err := pacmanInstallRepoDepsFn(pl.RepoMissing); err != nil {
 			fatalf("pacman install failed: %v", err)
 		}
 	}
 	p := pathsInitFn()
-	for _, name := range plan.BuildOrder {
+	for _, name := range pl.BuildOrder {
 		fmt.Printf("\n==> Upgrading AUR pkg: %s\n", name)
-		if err := installInstallFn([]string{name}, p, install.Options{Offline: *offline, Force: *force, NonInteractive: true, InstallBuilt: true, DisableSeccomp: *noSeccomp}); err != nil {
+		effOffline := *offline && !*online
+		if err := installInstallFn([]string{name}, p, install.Options{Offline: effOffline, Force: *force, NonInteractive: true, InstallBuilt: true, DisableSeccomp: *noSeccomp}); err != nil {
 			fatalf("upgrade failed for %s: %v", name, err)
 		}
 	}
 }
 
 func upgradeUsage() {
-	fmt.Println("Usage: go-rua upgrade [--printonly|--apply] [--devel] [--ignore=<pkg1,pkg2>] [--offline] [--force] [--install-repo-deps] [--no-seccomp]")
+	fmt.Println("Usage: go-rua upgrade [--plan] [--devel] [--ignore=<pkg1,pkg2>] [--online] [--offline] [--force] [--install-repo-deps] [--no-seccomp]")
 }
 
 func fatalf(format string, a ...any) {

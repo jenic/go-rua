@@ -14,6 +14,7 @@ type Config struct {
 	RW              []string // read-write
 	RWX             []string // read-write with exec
 	Env             []string // env var pass-through (KEY or KEY=VALUE)
+	WorkDir         string   // working directory for the target process
 	BestEffort      bool
 	UnrestrictedFS  bool
 	UnrestrictedNet bool // best-effort; may not be enforced by Landlock

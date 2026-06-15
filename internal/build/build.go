@@ -91,6 +91,7 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool
 		RW:              rwAdd,
 		RWX:             append(rwx, rwxAdd...),
 		Env:             envs,
+		WorkDir:         dir,
 		UnrestrictedNet: !offline,
 		UseBubblewrap:   useBwrap,
 		SeccompDenylist: seccomp,
@@ -162,6 +163,7 @@ func prefetchSources(dir string, p paths.Paths, seccomp bool) error {
 		ROX:             rox,
 		RWX:             rwx,
 		Env:             envs,
+		WorkDir:         dir,
 		UnrestrictedNet: true,
 		SeccompDenylist: seccomp,
 	}

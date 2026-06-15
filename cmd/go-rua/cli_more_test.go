@@ -49,12 +49,18 @@ func TestInstallCmdPlanOnly(t *testing.T) {
 	// Stub AUR info and plan
 	oldInfo, oldPlan := aurInfoFn, installPlanFn
 	oldSum, oldFmt := summarizeAURFn, formatSummaryFn
+	oldPaths := pathsInitFn
 	defer func() {
 		aurInfoFn = oldInfo
 		installPlanFn = oldPlan
 		summarizeAURFn = oldSum
 		formatSummaryFn = oldFmt
+		pathsInitFn = oldPaths
 	}()
+	pathsInitFn = func() paths.Paths {
+		dir := t.TempDir()
+		return paths.Paths{ConfigDir: dir, CacheBuildDir: dir, DataCheckedTars: dir}
+	}
 	aurInfoFn = func(names []string) ([]aur.Package, error) { return []aur.Package{{Name: "x"}}, nil }
 	summarizeAURFn = func(pkgs []string, infos []aur.Package) (installpkg.DepSummary, error) {
 		return installpkg.DepSummary{Targets: pkgs}, nil
@@ -99,6 +105,17 @@ func TestUpgradeCmdPrintOnlyFlag(t *testing.T) {
 }
 
 func TestBuilddirShellcheckNamcapWrappers(t *testing.T) {
+	oldPaths, oldPathsNoMakepkg := pathsInitFn, pathsInitNoMakepkgFn
+	defer func() {
+		pathsInitFn = oldPaths
+		pathsInitNoMakepkgFn = oldPathsNoMakepkg
+	}()
+	pathsInitFn = func() paths.Paths {
+		dir := t.TempDir()
+		return paths.Paths{ConfigDir: dir, CacheBuildDir: dir, DataCheckedTars: dir}
+	}
+	pathsInitNoMakepkgFn = pathsInitFn
+
 	// Builddir
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "PKGBUILD"), []byte(""), 0o644)
@@ -138,6 +155,7 @@ func TestBuilddirShellcheckNamcapWrappers(t *testing.T) {
 func TestInstallCmdInstallRepoDeps(t *testing.T) {
 	// Stub plan with repo missing
 	oldPlan, oldPac, oldInfo, oldSum, oldFmt, oldInstall := installPlanFn, pacmanInstallRepoDepsFn, aurInfoFn, summarizeAURFn, formatSummaryFn, installInstallFn
+	oldPaths := pathsInitFn
 	defer func() {
 		installPlanFn = oldPlan
 		pacmanInstallRepoDepsFn = oldPac
@@ -145,7 +163,12 @@ func TestInstallCmdInstallRepoDeps(t *testing.T) {
 		summarizeAURFn = oldSum
 		formatSummaryFn = oldFmt
 		installInstallFn = oldInstall
+		pathsInitFn = oldPaths
 	}()
+	pathsInitFn = func() paths.Paths {
+		dir := t.TempDir()
+		return paths.Paths{ConfigDir: dir, CacheBuildDir: dir, DataCheckedTars: dir}
+	}
 	installPlanFn = func(names []string) (installpkg.Plan, error) {
 		return installpkg.Plan{RepoMissing: []string{"libx"}}, nil
 	}
@@ -155,10 +178,6 @@ func TestInstallCmdInstallRepoDeps(t *testing.T) {
 		return installpkg.DepSummary{}, nil
 	}
 	formatSummaryFn = func(installpkg.DepSummary) string { return "" }
-	// isolate XDG dirs to avoid permission issues even if install runs
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	// No-op for install to avoid side effects
 	installInstallFn = func([]string, paths.Paths, installpkg.Options) error { return nil }
 	out, _ := captureOut(func() { installCmd([]string{"--install-repo-deps", "x"}) })
