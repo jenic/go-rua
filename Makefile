@@ -3,6 +3,8 @@
 TS := $(shell date +%Y%M%d)
 COMMIT=$(shell git describe --long --tags --dirty --always | sed 's/^v//;s/\([^-]*-\)g/r\1/;s/-/./g;s/dirty/dirty_$(TS)/g')
 GO ?= go
+GOTOOLCHAIN ?= go1.26.4
+GOPATH ?= $(CURDIR)/.gopath
 GOCACHE ?= $(CURDIR)/.gocache
 GOMODCACHE ?= $(CURDIR)/.gomodcache
 BINARY := go-rua
@@ -12,8 +14,8 @@ OUT := $(BIN_DIR)/$(BINARY)
 PKG := ./...
 LDFLAGS=-X main.Version=${COMMIT}
 GOFLAGS=-ldflags="${LDFLAGS}" -buildmode=pie
-GOENV := GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE)
-CACHE_DIRS := $(GOCACHE) $(GOMODCACHE)
+GOENV := GOPATH=$(GOPATH) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOTOOLCHAIN=$(GOTOOLCHAIN)
+CACHE_DIRS := $(GOPATH) $(GOCACHE) $(GOMODCACHE)
 
 .PHONY: help build run fmt vet test check smoke clean
 

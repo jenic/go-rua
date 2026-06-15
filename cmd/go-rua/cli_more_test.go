@@ -13,6 +13,7 @@ import (
 	installpkg "go-rua/internal/install"
 	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
+	"go-rua/internal/sourceaudit"
 )
 
 type rtCLIFunc2 func(*http.Request) (*http.Response, error)
@@ -149,6 +150,37 @@ func TestBuilddirShellcheckNamcapWrappers(t *testing.T) {
 	namcapCmd([]string{dir})
 	if !strings.HasSuffix(seenTarget, dir) {
 		t.Fatalf("namcap wrong target: %s", seenTarget)
+	}
+}
+
+func TestBuilddirPrintsSourceAuditWarnings(t *testing.T) {
+	oldPaths := pathsInitFn
+	oldBD := buildDirectoryCLIFn
+	oldAudit := sourceAuditDirFn
+	oldFormat := formatSourceAuditFn
+	defer func() {
+		pathsInitFn = oldPaths
+		buildDirectoryCLIFn = oldBD
+		sourceAuditDirFn = oldAudit
+		formatSourceAuditFn = oldFormat
+	}()
+	pathsInitFn = func() paths.Paths {
+		dir := t.TempDir()
+		return paths.Paths{ConfigDir: dir, CacheBuildDir: dir, DataCheckedTars: dir}
+	}
+	buildDirectoryCLIFn = func(string, paths.Paths, bool, bool, bool) error { return nil }
+	sourceAuditDirFn = func(string) (sourceaudit.Report, error) {
+		return sourceaudit.Report{Incomplete: []string{"source contains shell expansion"}}, nil
+	}
+	formatSourceAuditFn = func(sourceaudit.Report) string { return "Source URL warnings:\n" }
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "PKGBUILD"), []byte("pkgname=x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, errOut := captureOut(func() { builddirCmd([]string{dir}) })
+	if !strings.Contains(errOut, "Source URL warnings:") {
+		t.Fatalf("expected source audit warning, got %q", errOut)
 	}
 }
 

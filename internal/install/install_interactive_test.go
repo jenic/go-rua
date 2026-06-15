@@ -10,6 +10,7 @@ import (
 
 	"go-rua/internal/aur"
 	"go-rua/internal/paths"
+	"go-rua/internal/sourceaudit"
 )
 
 type rtIFunc2 func(*http.Request) (*http.Response, error)
@@ -71,5 +72,131 @@ func TestInstallInteractiveOkPath(t *testing.T) {
 
 	if err := Install([]string{"pkg"}, p, Options{NonInteractive: false, InstallBuilt: false}); err != nil {
 		t.Fatalf("Install interactive error: %v", err)
+	}
+}
+
+func TestInstallInteractiveRequiresURLWarningAck(t *testing.T) {
+	oldRun, oldRunC, oldRunCQ := runFn, runCFn, runCQFn
+	oldShell, oldBuild, oldTar := runShell, buildDirectoryFn, tarCheck
+	oldAudit, oldFormat := sourceAuditFn, formatSourceAuditFn
+	defer func() {
+		runFn = oldRun
+		runCFn = oldRunC
+		runCQFn = oldRunCQ
+		runShell = oldShell
+		buildDirectoryFn = oldBuild
+		tarCheck = oldTar
+		sourceAuditFn = oldAudit
+		formatSourceAuditFn = oldFormat
+	}()
+
+	aur.SetHTTPClientForTests(&http.Client{Transport: rtIFunc2(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Query().Get("type") == "info" {
+			body := `{"version":5,"type":"multiinfo","resultcount":1,"results":[{"Name":"pkg","Version":"1","PackageBase":"pkg"}]}`
+			return respI(200, body), nil
+		}
+		return respI(404, ""), nil
+	})})
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	p := paths.MustInitNoMakepkgChecks()
+
+	runFn = func(name string, args ...string) error {
+		if name == "git" && len(args) >= 3 && args[0] == "clone" {
+			dest := args[len(args)-1]
+			_ = os.MkdirAll(filepath.Join(dest, ".git"), 0o755)
+			_ = os.WriteFile(filepath.Join(dest, "PKGBUILD"), []byte("pkgname=('pkg')\npkgver=1\npkgrel=1\n"), 0o644)
+		}
+		return nil
+	}
+	runCFn = func(dir, name string, args ...string) error { return nil }
+	runCQFn = func(dir, name string, args ...string) error { return nil }
+	sourceAuditFn = func(string) (sourceaudit.Report, error) {
+		return sourceaudit.Report{Incomplete: []string{"source contains shell expansion"}}, nil
+	}
+	formatSourceAuditFn = func(sourceaudit.Report) string { return "Source URL warnings:\n" }
+	buildCalls := 0
+	buildDirectoryFn = func(dir string, _ paths.Paths, _ bool, _ bool, _ bool) error {
+		buildCalls++
+		return os.WriteFile(filepath.Join(dir, "pkg-1-1-any.pkg.tar.zst"), []byte("pkg"), 0o644)
+	}
+	tarCheck = func(_ string) error { return nil }
+
+	oldStdin := os.Stdin
+	defer func() { os.Stdin = oldStdin }()
+	f, err := os.CreateTemp("", "stdin-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write([]byte("o\nu\no\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin = f
+
+	if err := Install([]string{"pkg"}, p, Options{NonInteractive: false, InstallBuilt: false}); err != nil {
+		t.Fatalf("Install interactive error: %v", err)
+	}
+	if buildCalls != 1 {
+		t.Fatalf("expected build after one acknowledgement, got %d", buildCalls)
+	}
+}
+
+func TestInstallNonInteractiveContinuesWithURLWarnings(t *testing.T) {
+	oldRun, oldRunC := runFn, runCFn
+	oldBuild, oldTar := buildDirectoryFn, tarCheck
+	oldAudit, oldFormat := sourceAuditFn, formatSourceAuditFn
+	defer func() {
+		runFn = oldRun
+		runCFn = oldRunC
+		buildDirectoryFn = oldBuild
+		tarCheck = oldTar
+		sourceAuditFn = oldAudit
+		formatSourceAuditFn = oldFormat
+	}()
+
+	aur.SetHTTPClientForTests(&http.Client{Transport: rtIFunc2(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Query().Get("type") == "info" {
+			body := `{"version":5,"type":"multiinfo","resultcount":1,"results":[{"Name":"pkg","Version":"1","PackageBase":"pkg"}]}`
+			return respI(200, body), nil
+		}
+		return respI(404, ""), nil
+	})})
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	p := paths.MustInitNoMakepkgChecks()
+
+	runFn = func(name string, args ...string) error {
+		if name == "git" && len(args) >= 3 && args[0] == "clone" {
+			dest := args[len(args)-1]
+			_ = os.MkdirAll(filepath.Join(dest, ".git"), 0o755)
+			_ = os.WriteFile(filepath.Join(dest, "PKGBUILD"), []byte("pkgname=('pkg')\npkgver=1\npkgrel=1\n"), 0o644)
+		}
+		return nil
+	}
+	runCFn = func(dir, name string, args ...string) error { return nil }
+	sourceAuditFn = func(string) (sourceaudit.Report, error) {
+		return sourceaudit.Report{Incomplete: []string{"source contains shell expansion"}}, nil
+	}
+	formatSourceAuditFn = func(sourceaudit.Report) string { return "Source URL warnings:\n" }
+	buildCalls := 0
+	buildDirectoryFn = func(dir string, _ paths.Paths, _ bool, _ bool, _ bool) error {
+		buildCalls++
+		return os.WriteFile(filepath.Join(dir, "pkg-1-1-any.pkg.tar.zst"), []byte("pkg"), 0o644)
+	}
+	tarCheck = func(_ string) error { return nil }
+
+	if err := Install([]string{"pkg"}, p, Options{NonInteractive: true, InstallBuilt: false}); err != nil {
+		t.Fatalf("Install noninteractive error: %v", err)
+	}
+	if buildCalls != 1 {
+		t.Fatalf("expected noninteractive build to continue, got %d calls", buildCalls)
 	}
 }

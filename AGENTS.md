@@ -20,7 +20,7 @@
 - Tests: `make test` (runs `make fmt` first; add `_test.go` alongside code)
 - Full local check: `make check` (format, vet, test, build)
 
-Requirements: Go 1.24+, Linux kernel with Landlock support, Arch tools (`makepkg`, `pacman`, `vercmp`, `tar`, `git`, `shellcheck`, `namcap`).
+Requirements: Go 1.26+ with toolchain `go1.26.4`, Linux kernel with Landlock support, Arch tools (`makepkg`, `pacman`, `vercmp`, `tar`, `git`, `shellcheck`, `namcap`).
 
 ## Workspaces (go work) and Local Replacements
 
@@ -36,7 +36,9 @@ Recommended setup (no network):
 Resulting `go.work` (example):
 
 ```
-go 1.24
+go 1.26
+
+toolchain go1.26.4
 
 use (
     .

@@ -16,6 +16,7 @@ import (
 	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
 	"go-rua/internal/shellutil"
+	"go-rua/internal/sourceaudit"
 	"go-rua/internal/tarcheck"
 )
 
@@ -41,6 +42,8 @@ var (
 	buildDirectoryFn           = build.BuildDirectory
 	tarCheck                   = tarcheck.TarCheck
 	pacmanInstallLocalWithMode = pacman.InstallLocalWithMode
+	sourceAuditFn              = sourceaudit.AuditDir
+	formatSourceAuditFn        = sourceaudit.FormatReport
 )
 
 // Install clones AUR repos for packages, offers a simple review shell, builds and stages artifacts
@@ -124,15 +127,26 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 				_ = runCFn(reviewDir, "git", "checkout", "master")
 			}
 
+			auditReport, auditErr := sourceAuditFn(reviewDir)
+			if auditErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: source URL audit failed for %s: %v\n", pkgbase, auditErr)
+			} else if auditReport.HasWarnings() {
+				fmt.Fprint(os.Stderr, formatSourceAuditFn(auditReport))
+			}
+
 			if !opt.NonInteractive {
 				fmt.Printf("\nReviewing %s at %s\n", pkgbase, reviewDir)
 				reader := bufio.NewReader(os.Stdin)
+				urlWarningsAcked := auditErr == nil && !auditReport.HasWarnings()
 				for {
 					// Determine upstream merge status
 					merged := (runCQFn(reviewDir, "git", "merge-base", "--is-ancestor", "origin/master", "HEAD") == nil)
 					identical := (runCQFn(reviewDir, "git", "diff", "--quiet", "origin/master") == nil)
 					if merged {
 						fmt.Print("[S]=shellcheck, [N]=namcap, [T]=shell, ")
+						if !urlWarningsAcked {
+							fmt.Print("[U]=ack URL warnings, ")
+						}
 						if identical {
 							fmt.Print("[D]=(identical to upstream), ")
 						} else {
@@ -156,6 +170,11 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 					case "t":
 						fmt.Println("Exit the shell with Ctrl-D...")
 						_ = runShell(reviewDir)
+					case "u":
+						if !urlWarningsAcked {
+							urlWarningsAcked = true
+							fmt.Println("Source URL warnings acknowledged.")
+						}
 					case "d":
 						if merged {
 							_ = runCFn(reviewDir, "git", "--no-pager", "diff", "origin/master..HEAD")
@@ -167,10 +186,25 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 							// Attempt a non-fast-forward merge of upstream
 							if err := runCFn(reviewDir, "git", "merge", "--no-edit", "origin/master"); err != nil {
 								fmt.Println("Merge failed. Resolve conflicts in the shell and try again.")
+							} else {
+								auditReport, auditErr = sourceAuditFn(reviewDir)
+								if auditErr != nil {
+									fmt.Fprintf(os.Stderr, "Warning: source URL audit failed for %s: %v\n", pkgbase, auditErr)
+									urlWarningsAcked = false
+								} else {
+									urlWarningsAcked = !auditReport.HasWarnings()
+									if auditReport.HasWarnings() {
+										fmt.Fprint(os.Stderr, formatSourceAuditFn(auditReport))
+									}
+								}
 							}
 						}
 					case "o":
 						if merged {
+							if !urlWarningsAcked {
+								fmt.Println("Acknowledge source URL warnings with U before continuing.")
+								continue
+							}
 							goto BUILD
 						}
 					}

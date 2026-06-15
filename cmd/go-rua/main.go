@@ -14,6 +14,7 @@ import (
 	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
 	"go-rua/internal/shellutil"
+	"go-rua/internal/sourceaudit"
 	"go-rua/internal/tarcheck"
 	"go-rua/internal/term"
 )
@@ -39,6 +40,8 @@ var (
 	pathsInitFn             = paths.MustInit
 	pathsInitNoMakepkgFn    = paths.MustInitNoMakepkgChecks
 	buildDirectoryCLIFn     = build.BuildDirectory
+	sourceAuditDirFn        = sourceaudit.AuditDir
+	formatSourceAuditFn     = sourceaudit.FormatReport
 )
 
 func usage() {
@@ -176,6 +179,11 @@ func builddirCmd(args []string) {
 	p := pathsInitFn()
 	if *forceBwrap {
 		_ = os.Setenv("RUA_ALWAYS_BWRAP", "1")
+	}
+	if report, err := sourceAuditDirFn(abs); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: source URL audit failed: %v\n", err)
+	} else if report.HasWarnings() {
+		fmt.Fprint(os.Stderr, formatSourceAuditFn(report))
 	}
 	effOffline := *offline && !*online
 	if err := buildDirectoryCLIFn(abs, p, effOffline, *force, !*noSeccomp); err != nil {
