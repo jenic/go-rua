@@ -1,48 +1,48 @@
-go-rua
+# go-rua
 
 A lightweight reimplementation of RUA (AUR helper) in Go, sandboxed with Landlock and optionally bubblewrap + seccomp.
 
-Status: prototype with install/upgrade flows, dependency planning, and sandboxing.
+**Status:** prototype with install/upgrade flows, dependency planning, and sandboxing.
 
-Implemented commands
+## Implemented Commands
 
-- builddir: Build a PKGBUILD directory in a sandbox.
-  - Flags: `--online`, `--offline` (default), `--force`, `--no-seccomp`.
-- shellcheck: Run shellcheck for a PKGBUILD in a sandbox.
+- **builddir:** Build a PKGBUILD directory in a sandbox.
+  - Flags: `--online`, `--offline` (default), `--force`, `--no-seccomp`, `--bwrap`.
+- **shellcheck:** Run shellcheck for a PKGBUILD in a sandbox.
   - Uses a wrapper to set PKGBUILD-specific variables to reduce false positives.
-- namcap: Run namcap for a PKGBUILD in a sandbox.
-- install: Clone AUR repos, review, build, stage, optional install.
+- **namcap:** Run namcap for a PKGBUILD in a sandbox.
+- **install:** Clone AUR repos, review, build, stage, optional install.
   - Flags: `--online`, `--offline` (default), `--force`, `--install`, `--asdeps`, `--plan`, `--install-repo-deps`, `--no-seccomp`.
   - Review warns about source URLs with Unicode/IDN hostname spoofing risks and suspicious shell logic; interactive installs require acknowledgement before continuing.
-- tarcheck: Inspect a built package archive interactively (SUID, execs, INSTALL, etc.).
-- search: Search AUR by name/description via RPC; ALL provided keywords must match (AND semantics).
-- info: Show AUR package info via RPC (human-readable; use `--json` for raw JSON).
-- upgrade: Plan upgrades for outdated AUR packages by default; `--apply` reviews, builds, and installs.
+- **tarcheck:** Inspect a built package archive interactively (SUID, execs, INSTALL, etc.).
+- **search:** Search AUR by name/description via RPC; ALL provided keywords must match (AND semantics).
+- **info:** Show AUR package info via RPC (human-readable; use `--json` for raw JSON).
+- **upgrade:** Plan upgrades for outdated AUR packages by default; `--apply` reviews, builds, and installs.
   - Flags: `--apply`, `--plan`, `--printonly`, `--devel`, `--ignore=<pkg1,pkg2>`, `--online`, `--offline` (default), `--force`, `--install-repo-deps`, `--no-seccomp`.
 
-Dependency planning and summaries
+## Dependency Planning and Summaries
 
 - AUR info includes Depends/MakeDepends/CheckDepends fields.
 - Pre-install summary shows missing repo deps and unknown/virtual deps.
 - `install --plan` prints a build plan with topological order, repo deps to install, and unknowns.
-- `upgrade` prints the plan; `upgrade --apply` reviews, builds, and installs in plan order.
+- `upgrade` prints the plan; `upgrade --apply` reviews, builds, and installs outdated packages using the computed build order.
 - `upgrade --devel` considers VCS packages (-git/-hg/-bzr/-svn/-cvs/-darcs) as candidates.
 - `upgrade --ignore` and pacman `IgnorePkg` omit packages from upgrade checks; nonexistent packages are reported.
 - Optional `--install-repo-deps` runs `pacman -S --needed` using the elevation tool (see below) for missing repo deps.
 
-Sandboxing
+## Sandboxing
 
-- Landlock: Default file-system sandbox with a minimal baseline:
+- **Landlock:** Default file-system sandbox with a minimal baseline:
   - RO: `/etc`, `/proc`, `/sys`; ROX: `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`.
   - RW: `/dev/null`, `/dev/tty`, `/dev/pts`, `/dev/shm`; RWX: `/tmp`, `/var/tmp`.
   - Minimal env pass-through. `no_new_privs` set best-effort before exec.
-- Bubblewrap: When `--offline`, go-rua requires bubblewrap network isolation with `--unshare-net`, while mapping Landlock-like binds. To accept weaker Landlock-only offline isolation, set `RUA_ALLOW_WEAK_OFFLINE=1` with `RUA_NO_BWRAP=1`.
-- Seccomp denylist (optional, default on): A minimal seccomp-bpf denylist blocks risky syscalls (ptrace, bpf, userfaultfd, kexec, perf_event_open, name/open_by_handle, setns, mount family, pivot_root, module load, keyctl, process_vm_* , fanotify_init, chroot, reboot, iopl/ioperm, swapon/swapoff). Disable with `--no-seccomp` for debugging.
-- Offline builds: By default, go-rua builds offline. It first runs a prefetch step (`makepkg -f --verifysource`) with network allowed, using a static PKGBUILD generated from `.SRCINFO` when available, then builds with network disabled. Use `--online` to allow network during the build.
-- Source URL audit: Before `install` and `builddir` builds, go-rua reviews `.SRCINFO` and simple literal `PKGBUILD` source entries for Unicode/IDN hostname spoofing risks and warns when the two source lists differ. Interactive installs require acknowledging warnings with `U` before continuing.
-- Shell logic audit: Before `install` and `builddir` builds, go-rua parses `PKGBUILD` and literal `install=...` hook files with tree-sitter-bash. It warns on `eval`, shell `-c`, download pipelines into shells, `/dev/tcp` or `/dev/udp`, embedded base64 blobs, and third-party module installer commands such as npm, bun, pip, rustup, cargo, and `go install`. Interactive installs require acknowledging warnings with `H`; `builddir` prints warnings and continues.
+- **Bubblewrap:** When `--offline`, go-rua requires bubblewrap network isolation with `--unshare-net` and bubblewrap bind mounts. When bubblewrap is used, Landlock is not also applied in that sandbox process. To accept weaker Landlock-only offline isolation, set `RUA_ALLOW_WEAK_OFFLINE=1` with `RUA_NO_BWRAP=1`.
+- **Seccomp denylist:** Optional and on by default. A minimal seccomp-bpf denylist blocks risky syscalls (ptrace, bpf, userfaultfd, kexec, perf_event_open, name/open_by_handle, setns, mount family, pivot_root, module load, keyctl, process_vm_* , fanotify_init, chroot, reboot, iopl/ioperm, swapon/swapoff). Disable with `--no-seccomp` for debugging.
+- **Offline builds:** By default, go-rua builds offline. It first runs a prefetch step (`makepkg -f --verifysource`) with network allowed, using a static PKGBUILD generated from `.SRCINFO` when available, then builds with network disabled. Use `--online` to allow network during the build.
+- **Source URL audit:** Before `install` and `builddir` builds, go-rua reviews `.SRCINFO` and simple literal `PKGBUILD` source entries for Unicode/IDN hostname spoofing risks and warns when the two source lists differ. Interactive installs require acknowledging warnings with `U` before continuing.
+- **Shell logic audit:** Before `install` and `builddir` builds, go-rua parses `PKGBUILD` and literal `install=...` hook files with tree-sitter-bash. It warns on `eval`, shell `-c`, download pipelines into shells, `/dev/tcp` or `/dev/udp`, embedded base64 blobs, and third-party module installer commands such as npm, bun, pip, rustup, cargo, and `go install`. Interactive installs require acknowledging warnings with `H`; `builddir` prints warnings and continues.
 
-Typical flows
+## Typical Flows
 
 - Build a local PKGBUILD directory (offline by default, with seccomp):
   - `go-rua builddir /path/to/pkg`
@@ -55,7 +55,7 @@ Typical flows
   - `go-rua upgrade` (prints plan)
   - `go-rua upgrade --apply --install-repo-deps` (reviews, builds, and installs)
 
-Notes
+## Notes
 
 - Pacman dependencies must be installed outside the sandbox unless you use `--install-repo-deps`.
 - Offline builds require bubblewrap by default. Landlock-only offline builds require the explicit `RUA_ALLOW_WEAK_OFFLINE=1` override.
@@ -64,7 +64,7 @@ Notes
 - Elevation command: set `RUA_SUDO_COMMAND` to override the default `sudo` (e.g., `doas`, `suex`, etc.). Printed hints and pacman calls respect it.
 - Colors: honors `NO_COLOR`, `CLICOLOR`/`CLICOLOR_FORCE`, and `RUA_COLOR=always|never|auto`.
 
-Development
+## Development
 
 - Build: `make build` (formats first, then writes `bin/go-rua`)
 - Format: `make fmt`
