@@ -15,6 +15,7 @@ import (
 	"go-rua/internal/build"
 	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
+	"go-rua/internal/shellaudit"
 	"go-rua/internal/shellutil"
 	"go-rua/internal/sourceaudit"
 	"go-rua/internal/tarcheck"
@@ -44,6 +45,8 @@ var (
 	pacmanInstallLocalWithMode = pacman.InstallLocalWithMode
 	sourceAuditFn              = sourceaudit.AuditDir
 	formatSourceAuditFn        = sourceaudit.FormatReport
+	shellAuditFn               = shellaudit.AuditDir
+	formatShellAuditFn         = shellaudit.FormatReport
 )
 
 // Install clones AUR repos for packages, offers a simple review shell, builds and stages artifacts
@@ -139,11 +142,24 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 					return fmt.Errorf("source URL audit warnings for %s require interactive acknowledgement", pkgbase)
 				}
 			}
+			shellAuditReport, shellAuditErr := shellAuditFn(reviewDir)
+			if shellAuditErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: shell logic audit failed for %s: %v\n", pkgbase, shellAuditErr)
+				if opt.NonInteractive {
+					return fmt.Errorf("shell logic audit failed for %s in noninteractive mode: %w", pkgbase, shellAuditErr)
+				}
+			} else if shellAuditReport.HasWarnings() {
+				fmt.Fprint(os.Stderr, formatShellAuditFn(shellAuditReport))
+				if opt.NonInteractive {
+					return fmt.Errorf("shell logic audit warnings for %s require interactive acknowledgement", pkgbase)
+				}
+			}
 
 			if !opt.NonInteractive {
 				fmt.Printf("\nReviewing %s at %s\n", pkgbase, reviewDir)
 				reader := bufio.NewReader(os.Stdin)
 				urlWarningsAcked := auditErr == nil && !auditReport.HasWarnings()
+				shellWarningsAcked := shellAuditErr == nil && !shellAuditReport.HasWarnings()
 				for {
 					// Determine upstream merge status
 					merged := (runCQFn(reviewDir, "git", "merge-base", "--is-ancestor", "origin/master", "HEAD") == nil)
@@ -152,6 +168,9 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 						fmt.Print("[S]=shellcheck, [N]=namcap, [T]=shell, ")
 						if !urlWarningsAcked {
 							fmt.Print("[U]=ack URL warnings, ")
+						}
+						if !shellWarningsAcked {
+							fmt.Print("[H]=ack shell warnings, ")
 						}
 						if identical {
 							fmt.Print("[D]=(identical to upstream), ")
@@ -181,6 +200,11 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 							urlWarningsAcked = true
 							fmt.Println("Source URL warnings acknowledged.")
 						}
+					case "h":
+						if !shellWarningsAcked {
+							shellWarningsAcked = true
+							fmt.Println("Shell logic warnings acknowledged.")
+						}
 					case "d":
 						if merged {
 							_ = runCFn(reviewDir, "git", "--no-pager", "diff", "origin/master..HEAD")
@@ -203,12 +227,26 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 										fmt.Fprint(os.Stderr, formatSourceAuditFn(auditReport))
 									}
 								}
+								shellAuditReport, shellAuditErr = shellAuditFn(reviewDir)
+								if shellAuditErr != nil {
+									fmt.Fprintf(os.Stderr, "Warning: shell logic audit failed for %s: %v\n", pkgbase, shellAuditErr)
+									shellWarningsAcked = false
+								} else {
+									shellWarningsAcked = !shellAuditReport.HasWarnings()
+									if shellAuditReport.HasWarnings() {
+										fmt.Fprint(os.Stderr, formatShellAuditFn(shellAuditReport))
+									}
+								}
 							}
 						}
 					case "o":
 						if merged {
 							if !urlWarningsAcked {
 								fmt.Println("Acknowledge source URL warnings with U before continuing.")
+								continue
+							}
+							if !shellWarningsAcked {
+								fmt.Println("Acknowledge shell logic warnings with H before continuing.")
 								continue
 							}
 							goto BUILD

@@ -87,6 +87,8 @@ Interactive review can show local or upstream diffs, run `shellcheck`, run `namc
 
 go-rua audits source URLs from `.SRCINFO` and simple literal `PKGBUILD` source arrays before continuing. Hostnames with Unicode, IDN/Punycode differences, invisible/control characters, or mixed-script labels are highlighted. Differences between `.SRCINFO` and parsed `PKGBUILD` sources are also highlighted because stale metadata can hide source URLs from review. Interactive review requires acknowledging these warnings before continuing.
 
+go-rua also parses `PKGBUILD` and literal `install=...` hook files with tree-sitter-bash to highlight suspicious shell logic such as `eval`, shell `-c`, download pipelines into shells, `/dev/tcp` or `/dev/udp`, embedded base64 blobs, and third-party module installer commands. Interactive review requires acknowledging these warnings before continuing. `builddir` prints these warnings but does not prompt.
+
 ### Build Directory
 
 Before building, go-rua copies the reviewed checkout into `~/.cache/rua/build/<pkgbase>` and removes `.git`. The build directory is disposable and should be treated as hostile after package code has run.
@@ -137,6 +139,7 @@ Privileged pacman operations are outside the sandbox. Installing a package is th
 - Review-first workflow for AUR Git contents.
 - Dependency planning before install or upgrade.
 - Unicode/IDN source URL spoofing warnings before install and builddir builds.
+- Heuristic shell logic warnings before install and builddir builds.
 - Offline-by-default main builds.
 - Network-enabled prefetch separated from offline build.
 - Sandboxed execution wrapper with explicit filesystem access rules.
@@ -160,6 +163,7 @@ Privileged pacman operations are outside the sandbox. Installing a package is th
 - Sandboxing depends on kernel and tool correctness.
 - Trusted tools such as `makepkg`, `tar`, `git`, `shellcheck`, and `namcap` process untrusted input.
 - Source URL spoofing detection is conservative and does not implement a full Unicode confusables skeleton.
+- Shell logic detection is heuristic and may miss obfuscation or flag legitimate build/install behavior.
 - PKGBUILD source parsing is best-effort and non-executing; dynamic source arrays may require manual review.
 - Allowed filesystem paths may expose data needed by legitimate builds; local `wrap_args.d` policy can expand this access.
 - `wrap_args.d` can intentionally expand sandbox access and should be treated as part of local policy.
@@ -171,6 +175,7 @@ Privileged pacman operations are outside the sandbox. Installing a package is th
 - Prefer `install --plan` before building or applying changes. `upgrade` plans by default; use `upgrade --apply` only after reviewing the plan.
 - Review AUR diffs before continuing, especially after updates.
 - Treat source URL warnings as high-risk review items; compare the displayed host to the IDNA/Punycode form and codepoint details.
+- Treat shell logic warnings as prompts for manual review of the exact `PKGBUILD` or install hook snippet.
 - Treat unknown dependencies, virtual providers, and unexpected repo dependency suggestions as suspicious until understood.
 - Keep the default offline build behavior unless a package genuinely requires `--online`.
 - Avoid disabling bubblewrap or seccomp unless debugging a specific failure. If accepting weak offline isolation, treat that build as having no guaranteed network isolation.

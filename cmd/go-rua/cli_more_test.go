@@ -13,6 +13,7 @@ import (
 	installpkg "go-rua/internal/install"
 	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
+	"go-rua/internal/shellaudit"
 	"go-rua/internal/sourceaudit"
 )
 
@@ -191,6 +192,37 @@ func TestBuilddirPrintsSourceAuditWarnings(t *testing.T) {
 	_, errOut := captureOut(func() { builddirCmd([]string{dir}) })
 	if !strings.Contains(errOut, "Source URL warnings:") {
 		t.Fatalf("expected source audit warning, got %q", errOut)
+	}
+}
+
+func TestBuilddirPrintsShellAuditWarnings(t *testing.T) {
+	restoreCLISeams(t)
+
+	pathsInitFn = func() paths.Paths {
+		dir := t.TempDir()
+		return paths.Paths{ConfigDir: dir, CacheBuildDir: dir, DataCheckedTars: dir}
+	}
+	buildCalled := false
+	buildDirectoryCLIFn = func(string, paths.Paths, bool, bool, bool) error {
+		buildCalled = true
+		return nil
+	}
+	sourceAuditDirFn = func(string) (sourceaudit.Report, error) { return sourceaudit.Report{}, nil }
+	shellAuditDirFn = func(string) (shellaudit.Report, error) {
+		return shellaudit.Report{Findings: []shellaudit.Finding{{File: "PKGBUILD", Line: 1, Column: 1, Rule: "eval", Severity: "high", Reason: "test"}}}, nil
+	}
+	formatShellAuditFn = func(shellaudit.Report) string { return "Shell logic warnings:\n" }
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "PKGBUILD"), []byte("pkgname=x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, errOut := captureOut(func() { builddirCmd([]string{dir}) })
+	if !strings.Contains(errOut, "Shell logic warnings:") {
+		t.Fatalf("expected shell audit warning, got %q", errOut)
+	}
+	if !buildCalled {
+		t.Fatalf("builddir should continue after shell audit warnings")
 	}
 }
 

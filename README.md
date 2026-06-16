@@ -13,7 +13,7 @@ Implemented commands
 - namcap: Run namcap for a PKGBUILD in a sandbox.
 - install: Clone AUR repos, review, build, stage, optional install.
   - Flags: `--online`, `--offline` (default), `--force`, `--install`, `--asdeps`, `--plan`, `--install-repo-deps`, `--no-seccomp`.
-  - Review warns about source URLs with Unicode/IDN hostname spoofing risks and requires acknowledgement before continuing.
+  - Review warns about source URLs with Unicode/IDN hostname spoofing risks and suspicious shell logic; interactive installs require acknowledgement before continuing.
 - tarcheck: Inspect a built package archive interactively (SUID, execs, INSTALL, etc.).
 - search: Search AUR by name/description via RPC; ALL provided keywords must match (AND semantics).
 - info: Show AUR package info via RPC (human-readable; use `--json` for raw JSON).
@@ -40,6 +40,7 @@ Sandboxing
 - Seccomp denylist (optional, default on): A minimal seccomp-bpf denylist blocks risky syscalls (ptrace, bpf, userfaultfd, kexec, perf_event_open, name/open_by_handle, setns, mount family, pivot_root, module load, keyctl, process_vm_* , fanotify_init, chroot, reboot, iopl/ioperm, swapon/swapoff). Disable with `--no-seccomp` for debugging.
 - Offline builds: By default, go-rua builds offline. It first runs a prefetch step (`makepkg -f --verifysource`) with network allowed, using a static PKGBUILD generated from `.SRCINFO` when available, then builds with network disabled. Use `--online` to allow network during the build.
 - Source URL audit: Before `install` and `builddir` builds, go-rua reviews `.SRCINFO` and simple literal `PKGBUILD` source entries for Unicode/IDN hostname spoofing risks and warns when the two source lists differ. Interactive installs require acknowledging warnings with `U` before continuing.
+- Shell logic audit: Before `install` and `builddir` builds, go-rua parses `PKGBUILD` and literal `install=...` hook files with tree-sitter-bash. It warns on `eval`, shell `-c`, download pipelines into shells, `/dev/tcp` or `/dev/udp`, embedded base64 blobs, and third-party module installer commands such as npm, bun, pip, rustup, cargo, and `go install`. Interactive installs require acknowledging warnings with `H`; `builddir` prints warnings and continues.
 
 Typical flows
 

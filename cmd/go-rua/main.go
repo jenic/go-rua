@@ -13,6 +13,7 @@ import (
 	install "go-rua/internal/install"
 	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
+	"go-rua/internal/shellaudit"
 	"go-rua/internal/shellutil"
 	"go-rua/internal/sourceaudit"
 	"go-rua/internal/tarcheck"
@@ -42,6 +43,8 @@ var (
 	buildDirectoryCLIFn     = build.BuildDirectory
 	sourceAuditDirFn        = sourceaudit.AuditDir
 	formatSourceAuditFn     = sourceaudit.FormatReport
+	shellAuditDirFn         = shellaudit.AuditDir
+	formatShellAuditFn      = shellaudit.FormatReport
 )
 
 func usage() {
@@ -184,6 +187,11 @@ func builddirCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "Warning: source URL audit failed: %v\n", err)
 	} else if report.HasWarnings() {
 		fmt.Fprint(os.Stderr, formatSourceAuditFn(report))
+	}
+	if report, err := shellAuditDirFn(abs); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: shell logic audit failed: %v\n", err)
+	} else if report.HasWarnings() {
+		fmt.Fprint(os.Stderr, formatShellAuditFn(report))
 	}
 	effOffline := *offline && !*online
 	if err := buildDirectoryCLIFn(abs, p, effOffline, *force, !*noSeccomp); err != nil {

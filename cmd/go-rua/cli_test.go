@@ -48,6 +48,7 @@ func restoreCLISeams(t *testing.T) {
 	oldPaths, oldPathsNoMakepkg := pathsInitFn, pathsInitNoMakepkgFn
 	oldBuildDir := buildDirectoryCLIFn
 	oldSourceAudit, oldFormatSourceAudit := sourceAuditDirFn, formatSourceAuditFn
+	oldShellAudit, oldFormatShellAudit := shellAuditDirFn, formatShellAuditFn
 	t.Cleanup(func() {
 		aurInfoFn = oldAurInfo
 		aurSearchANDFn = oldAurSearchAND
@@ -68,6 +69,8 @@ func restoreCLISeams(t *testing.T) {
 		buildDirectoryCLIFn = oldBuildDir
 		sourceAuditDirFn = oldSourceAudit
 		formatSourceAuditFn = oldFormatSourceAudit
+		shellAuditDirFn = oldShellAudit
+		formatShellAuditFn = oldFormatShellAudit
 	})
 }
 

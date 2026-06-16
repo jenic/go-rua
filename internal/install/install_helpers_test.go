@@ -11,6 +11,7 @@ func restoreInstallSeams(t *testing.T) {
 	oldRun, oldRunC, oldRunCQ := runFn, runCFn, runCQFn
 	oldShell, oldBuild, oldTar := runShell, buildDirectoryFn, tarCheck
 	oldPacman, oldAudit, oldFormat := pacmanInstallLocalWithMode, sourceAuditFn, formatSourceAuditFn
+	oldShellAudit, oldFormatShellAudit := shellAuditFn, formatShellAuditFn
 	t.Cleanup(func() {
 		runFn = oldRun
 		runCFn = oldRunC
@@ -21,6 +22,8 @@ func restoreInstallSeams(t *testing.T) {
 		pacmanInstallLocalWithMode = oldPacman
 		sourceAuditFn = oldAudit
 		formatSourceAuditFn = oldFormat
+		shellAuditFn = oldShellAudit
+		formatShellAuditFn = oldFormatShellAudit
 	})
 }
 
