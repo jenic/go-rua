@@ -45,30 +45,26 @@ func (r Report) HasWarnings() bool {
 	return len(r.Findings) > 0 || len(r.Incomplete) > 0 || len(r.Mismatches) > 0
 }
 
+// SourcesFromDir extracts source entries from .SRCINFO and PKGBUILD when present.
+// It returns best-effort parse warnings for PKGBUILD source entries in incomplete.
+func SourcesFromDir(dir string) ([]Source, []string, error) {
+	srcinfoSources, pkgbuildSources, incomplete, hasSRCINFO, hasPKGBUILD, err := collectSourcesFromDir(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !hasSRCINFO && !hasPKGBUILD {
+		return nil, nil, fmt.Errorf("no .SRCINFO or PKGBUILD found in %s", dir)
+	}
+	return append(append([]Source{}, srcinfoSources...), pkgbuildSources...), incomplete, nil
+}
+
 // AuditDir extracts source entries from .SRCINFO and PKGBUILD when present,
 // then flags Unicode/IDN hostname spoofing risks and source metadata drift.
 func AuditDir(dir string) (Report, error) {
-	var srcinfoSources []Source
-	var pkgbuildSources []Source
-	var incomplete []string
-	hasSRCINFO := false
-	hasPKGBUILD := false
-
-	if sources, err := sourcesFromSRCINFO(filepath.Join(dir, ".SRCINFO")); err == nil {
-		srcinfoSources = sources
-		hasSRCINFO = true
-	} else if !os.IsNotExist(err) {
+	srcinfoSources, pkgbuildSources, incomplete, hasSRCINFO, hasPKGBUILD, err := collectSourcesFromDir(dir)
+	if err != nil {
 		return Report{}, err
 	}
-
-	if sources, messages, err := sourcesFromPKGBUILD(filepath.Join(dir, "PKGBUILD")); err == nil {
-		pkgbuildSources = sources
-		incomplete = messages
-		hasPKGBUILD = true
-	} else if !os.IsNotExist(err) {
-		return Report{}, err
-	}
-
 	if !hasSRCINFO && !hasPKGBUILD {
 		return Report{}, fmt.Errorf("no .SRCINFO or PKGBUILD found in %s", dir)
 	}
@@ -80,6 +76,31 @@ func AuditDir(dir string) (Report, error) {
 		report.Mismatches = append(report.Mismatches, compareSourceSets(srcinfoSources, pkgbuildSources)...)
 	}
 	return report, nil
+}
+
+func collectSourcesFromDir(dir string) ([]Source, []Source, []string, bool, bool, error) {
+	var srcinfoSources []Source
+	var pkgbuildSources []Source
+	var incomplete []string
+	hasSRCINFO := false
+	hasPKGBUILD := false
+
+	if sources, err := sourcesFromSRCINFO(filepath.Join(dir, ".SRCINFO")); err == nil {
+		srcinfoSources = sources
+		hasSRCINFO = true
+	} else if !os.IsNotExist(err) {
+		return nil, nil, nil, false, false, err
+	}
+
+	if sources, messages, err := sourcesFromPKGBUILD(filepath.Join(dir, "PKGBUILD")); err == nil {
+		pkgbuildSources = sources
+		incomplete = messages
+		hasPKGBUILD = true
+	} else if !os.IsNotExist(err) {
+		return nil, nil, nil, false, false, err
+	}
+
+	return srcinfoSources, pkgbuildSources, incomplete, hasSRCINFO, hasPKGBUILD, nil
 }
 
 func auditSources(sources []Source) Report {

@@ -3,12 +3,16 @@ package shellaudit
 import (
 	"encoding/base64"
 	"fmt"
+	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"unicode"
+
+	"go-rua/internal/sourceaudit"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_bash "github.com/tree-sitter/tree-sitter-bash/bindings/go"
@@ -43,14 +47,15 @@ func (r Report) HasWarnings() bool {
 	return len(r.Findings) > 0 || len(r.Incomplete) > 0
 }
 
-// AuditDir parses PKGBUILD and any static install hook referenced by it.
+// AuditDir parses PKGBUILD, static install hooks, and package-local shell scripts.
 func AuditDir(dir string) (Report, error) {
 	pkgbuild := filepath.Join(dir, "PKGBUILD")
 	if _, err := os.Stat(pkgbuild); err != nil {
 		return Report{}, fmt.Errorf("PKGBUILD not found in %s: %w", dir, err)
 	}
 	report := Report{}
-	if err := auditFile(&report, dir, pkgbuild); err != nil {
+	audited := map[string]struct{}{}
+	if err := auditFileOnce(&report, dir, pkgbuild, audited); err != nil {
 		return Report{}, err
 	}
 	hooks, incomplete, err := installHooks(dir, pkgbuild)
@@ -59,12 +64,36 @@ func AuditDir(dir string) (Report, error) {
 	}
 	report.Incomplete = append(report.Incomplete, incomplete...)
 	for _, hook := range hooks {
-		if err := auditFile(&report, dir, hook); err != nil {
+		if err := auditFileOnce(&report, dir, hook, audited); err != nil {
 			report.Incomplete = append(report.Incomplete, fmt.Sprintf("%s could not be audited: %v", relPath(dir, hook), err))
+		}
+	}
+	scripts, incomplete, err := discoverShellScripts(dir)
+	if err != nil {
+		report.Incomplete = append(report.Incomplete, fmt.Sprintf("shell script discovery failed: %v", err))
+	} else {
+		report.Incomplete = append(report.Incomplete, incomplete...)
+		for _, script := range scripts {
+			if err := auditFileOnce(&report, dir, script, audited); err != nil {
+				report.Incomplete = append(report.Incomplete, fmt.Sprintf("%s could not be audited: %v", relPath(dir, script), err))
+			}
 		}
 	}
 	sortReport(&report)
 	return report, nil
+}
+
+func auditFileOnce(report *Report, root, path string, audited map[string]struct{}) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	abs = filepath.Clean(abs)
+	if _, ok := audited[abs]; ok {
+		return nil
+	}
+	audited[abs] = struct{}{}
+	return auditFile(report, root, abs)
 }
 
 func auditFile(report *Report, root, path string) error {
@@ -94,6 +123,157 @@ func auditFile(report *Report, root, path string) error {
 		auditNode(report, seen, rel, src, n)
 	})
 	return nil
+}
+
+func discoverShellScripts(root string) ([]string, []string, error) {
+	var scripts []string
+	var incomplete []string
+	seen := map[string]struct{}{}
+	add := func(path string) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return
+		}
+		abs = filepath.Clean(abs)
+		if _, ok := seen[abs]; ok {
+			return
+		}
+		seen[abs] = struct{}{}
+		scripts = append(scripts, abs)
+	}
+
+	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if shouldSkipShellWalkDir(root, path, d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Type().IsRegular() && strings.EqualFold(filepath.Ext(d.Name()), ".sh") {
+			add(path)
+		}
+		return nil
+	}); err != nil {
+		return nil, nil, err
+	}
+
+	sources, _, err := sourceaudit.SourcesFromDir(root)
+	if err != nil {
+		incomplete = append(incomplete, fmt.Sprintf("source shell script discovery could not read source metadata: %v", err))
+	} else {
+		for _, src := range sources {
+			path, ok := localSourcePath(root, src.Value)
+			if !ok {
+				continue
+			}
+			if !pathIsInside(root, path) {
+				incomplete = append(incomplete, fmt.Sprintf("source shell script %s at %s escapes package directory", src.Value, src.Location))
+				continue
+			}
+			info, statErr := os.Stat(path)
+			if statErr != nil {
+				if sourceNameLooksShell(path) {
+					incomplete = append(incomplete, fmt.Sprintf("source shell script %s at %s could not be read: %v", filepath.Base(path), src.Location, statErr))
+				}
+				continue
+			}
+			if info.IsDir() {
+				continue
+			}
+			if info.Mode().IsRegular() && (sourceNameLooksShell(path) || hasShellShebang(path)) {
+				add(path)
+			}
+		}
+	}
+
+	sort.Strings(scripts)
+	sort.Strings(incomplete)
+	return scripts, incomplete, nil
+}
+
+func shouldSkipShellWalkDir(root, path, name string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." {
+		return false
+	}
+	switch name {
+	case ".git", ".hg", ".svn", ".bzr":
+		return true
+	}
+	return rel == "src" || rel == "pkg"
+}
+
+func localSourcePath(root, raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.Contains(raw, "\x00") || strings.ContainsAny(raw, "$`") {
+		return "", false
+	}
+	if alias, rest, ok := strings.Cut(raw, "::"); ok {
+		raw = rest
+		if alias != "" {
+			if filepath.IsAbs(alias) || strings.Contains(alias, "\x00") {
+				return "", false
+			}
+			return filepath.Clean(filepath.Join(root, alias)), true
+		}
+	}
+	if u, err := url.Parse(raw); err == nil && u.Scheme != "" && u.Host != "" {
+		base := filepath.Base(u.Path)
+		if base == "." || base == "/" || base == "" {
+			return "", false
+		}
+		return filepath.Clean(filepath.Join(root, base)), true
+	}
+	if filepath.IsAbs(raw) {
+		return "", false
+	}
+	return filepath.Clean(filepath.Join(root, raw)), true
+}
+
+func pathIsInside(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." && !filepath.IsAbs(rel)
+}
+
+func sourceNameLooksShell(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".sh")
+}
+
+func hasShellShebang(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	b := make([]byte, 512)
+	n, err := f.Read(b)
+	if err != nil && n == 0 {
+		return false
+	}
+	text := string(b[:n])
+	if !strings.HasPrefix(text, "#!") {
+		return false
+	}
+	line := text
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	fields := strings.Fields(strings.TrimPrefix(line, "#!"))
+	for len(fields) > 0 {
+		cmd := commandBase(fields[0])
+		if cmd == "env" {
+			fields = fields[1:]
+			for len(fields) > 0 && strings.HasPrefix(fields[0], "-") {
+				fields = fields[1:]
+			}
+			continue
+		}
+		return isShell(cmd)
+	}
+	return false
 }
 
 func auditNode(report *Report, seen map[string]struct{}, file string, src []byte, n *tree_sitter.Node) {
