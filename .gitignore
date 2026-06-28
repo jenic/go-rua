@@ -1,0 +1,9 @@
+bin/
+go.work
+third_party/
+.gocache/
+.gocache-tests/
+.gomodcache/
+.gopath/
+*.out
+testdata/fixtures/monochrome-git.tar.gz

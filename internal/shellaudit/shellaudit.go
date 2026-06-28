@@ -301,7 +301,11 @@ func auditCommand(report *Report, seen map[string]struct{}, file string, src []b
 	case isShell(cmd) && hasFlag(tokens[1:], "-c"):
 		addFinding(report, seen, file, n, "shell-c", "high", text, "shell interpreter is invoked with -c")
 	case isThirdPartyInstall(tokens):
-		addFinding(report, seen, file, n, "third-party-install", "medium", text, "package script invokes a third-party module installer")
+		addFinding(report, seen, file, n, "third-party-install", "medium", text, "package script invokes a third-party module installer that may run dependency lifecycle scripts")
+	case isThirdPartyExec(tokens):
+		addFinding(report, seen, file, n, "third-party-exec", "medium", text, "package script executes third-party package-manager tooling")
+	case isPackageScriptRun(tokens):
+		addFinding(report, seen, file, n, "package-script-run", "medium", text, "package script runs project-defined package-manager scripts")
 	}
 	auditTextPayloads(report, seen, file, src, n, text)
 }
@@ -639,6 +643,40 @@ func isThirdPartyInstall(tokens []string) bool {
 		return hasSubcommand(args, "install", "get")
 	case "python", "python2", "python3":
 		return hasPythonPipInstall(args)
+	default:
+		return false
+	}
+}
+
+func isThirdPartyExec(tokens []string) bool {
+	if len(tokens) == 0 {
+		return false
+	}
+	cmd := commandBase(tokens[0])
+	args := tokens[1:]
+	switch cmd {
+	case "bun":
+		return hasSubcommand(args, "x")
+	case "npm":
+		return hasSubcommand(args, "exec")
+	case "npx":
+		return true
+	case "pnpm", "yarn":
+		return hasSubcommand(args, "dlx")
+	default:
+		return false
+	}
+}
+
+func isPackageScriptRun(tokens []string) bool {
+	if len(tokens) == 0 {
+		return false
+	}
+	cmd := commandBase(tokens[0])
+	args := tokens[1:]
+	switch cmd {
+	case "npm", "yarn", "pnpm", "bun":
+		return hasSubcommand(args, "run")
 	default:
 		return false
 	}

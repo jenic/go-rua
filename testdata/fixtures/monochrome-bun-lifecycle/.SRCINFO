@@ -1,0 +1,15 @@
+pkgbase = monochrome-bun-lifecycle
+	pkgdesc = Sanitized Bun lifecycle audit fixture
+	pkgver = r1.0000000
+	pkgrel = 1
+	url = https://example.invalid/monochrome
+	arch = x86_64
+	license = custom
+	makedepends = git
+	makedepends = bun
+	source_x86_64 = monochrome::git+https://example.invalid/monochrome.git
+	source_x86_64 = icon.png::https://example.invalid/appicon.png
+	sha256sums_x86_64 = SKIP
+	sha256sums_x86_64 = SKIP
+
+pkgname = monochrome-bun-lifecycle

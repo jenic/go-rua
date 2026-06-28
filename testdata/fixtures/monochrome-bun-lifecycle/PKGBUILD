@@ -1,0 +1,37 @@
+# Sanitized fixture derived from a real AUR package shape. It intentionally
+# keeps representative package-manager command forms without vendored payloads.
+
+pkgname='monochrome-bun-lifecycle'
+pkgver=r1.0000000
+pkgrel=1
+pkgdesc='Sanitized Bun lifecycle audit fixture'
+arch=('x86_64')
+url='https://example.invalid/monochrome'
+license=('custom')
+makedepends=('git' 'bun')
+source_x86_64=(
+  "monochrome::git+https://example.invalid/monochrome.git"
+  "icon.png::https://example.invalid/appicon.png"
+)
+sha256sums_x86_64=('SKIP' 'SKIP')
+
+pkgver() {
+  printf 'r1.0000000'
+}
+
+prepare() {
+  cd "$srcdir/monochrome" || exit
+  bun install
+  bun x neutralino update
+}
+
+build() {
+  cd "$srcdir/monochrome" || exit
+  bun run build
+}
+
+package() {
+  install -d "$pkgdir/usr/bin"
+  printf '%s\n' '#!/bin/sh' 'exec /opt/monochrome/Monochrome' > "$pkgdir/usr/bin/monochrome"
+  chmod +x "$pkgdir/usr/bin/monochrome"
+}

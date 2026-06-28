@@ -237,6 +237,60 @@ func TestAuditDirBraveFixtureAuditsSourceScript(t *testing.T) {
 	}
 }
 
+func TestAuditDirMonochromeBunLifecycleFixture(t *testing.T) {
+	dir := filepath.Join("..", "..", "testdata", "fixtures", "monochrome-bun-lifecycle")
+	report, err := AuditDir(dir)
+	if err != nil {
+		t.Fatalf("AuditDir error: %v", err)
+	}
+	wantRules := []string{
+		"third-party-install",
+		"third-party-exec",
+		"package-script-run",
+	}
+	for _, rule := range wantRules {
+		if !hasRule(report, rule) {
+			t.Fatalf("missing rule %s in %#v", rule, report.Findings)
+		}
+	}
+}
+
+func TestPackageManagerRiskClassifiers(t *testing.T) {
+	tests := []struct {
+		name        string
+		tokens      []string
+		wantInstall bool
+		wantExec    bool
+		wantRun     bool
+	}{
+		{name: "bun install", tokens: []string{"bun", "install"}, wantInstall: true},
+		{name: "bun add", tokens: []string{"bun", "add", "dep"}, wantInstall: true},
+		{name: "bun exec", tokens: []string{"bun", "x", "tool"}, wantExec: true},
+		{name: "bun run", tokens: []string{"bun", "run", "build"}, wantRun: true},
+		{name: "npm exec", tokens: []string{"npm", "exec", "tool"}, wantExec: true},
+		{name: "npx", tokens: []string{"npx", "tool"}, wantExec: true},
+		{name: "pnpm dlx", tokens: []string{"pnpm", "dlx", "tool"}, wantExec: true},
+		{name: "yarn dlx", tokens: []string{"yarn", "dlx", "tool"}, wantExec: true},
+		{name: "npm run", tokens: []string{"npm", "run", "build"}, wantRun: true},
+		{name: "make install", tokens: []string{"make", "install"}},
+		{name: "install utility", tokens: []string{"/usr/bin/install", "-Dm644", "src", "dst"}},
+		{name: "git command", tokens: []string{"git", "clone", "https://example.invalid/repo.git"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isThirdPartyInstall(tt.tokens); got != tt.wantInstall {
+				t.Fatalf("isThirdPartyInstall(%v) = %v, want %v", tt.tokens, got, tt.wantInstall)
+			}
+			if got := isThirdPartyExec(tt.tokens); got != tt.wantExec {
+				t.Fatalf("isThirdPartyExec(%v) = %v, want %v", tt.tokens, got, tt.wantExec)
+			}
+			if got := isPackageScriptRun(tt.tokens); got != tt.wantRun {
+				t.Fatalf("isPackageScriptRun(%v) = %v, want %v", tt.tokens, got, tt.wantRun)
+			}
+		})
+	}
+}
+
 func hasRule(report Report, rule string) bool {
 	for _, finding := range report.Findings {
 		if finding.Rule == rule {
