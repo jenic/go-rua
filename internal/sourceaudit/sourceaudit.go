@@ -29,6 +29,7 @@ type Source struct {
 	Key      string
 	Value    string
 	Location string
+	resolved bool
 }
 
 type Finding struct {
@@ -82,17 +83,19 @@ func collectSourcesFromDir(dir string) ([]Source, []Source, []string, bool, bool
 	var srcinfoSources []Source
 	var pkgbuildSources []Source
 	var incomplete []string
+	var vars map[string]string
 	hasSRCINFO := false
 	hasPKGBUILD := false
 
-	if sources, err := sourcesFromSRCINFO(filepath.Join(dir, ".SRCINFO")); err == nil {
+	if sources, metadata, err := sourcesFromSRCINFO(filepath.Join(dir, ".SRCINFO")); err == nil {
 		srcinfoSources = sources
+		vars = metadata
 		hasSRCINFO = true
 	} else if !os.IsNotExist(err) {
 		return nil, nil, nil, false, false, err
 	}
 
-	if sources, messages, err := sourcesFromPKGBUILD(filepath.Join(dir, "PKGBUILD")); err == nil {
+	if sources, messages, err := sourcesFromPKGBUILD(filepath.Join(dir, "PKGBUILD"), vars); err == nil {
 		pkgbuildSources = sources
 		incomplete = messages
 		hasPKGBUILD = true
@@ -133,11 +136,17 @@ func compareSourceSets(srcinfoSources, pkgbuildSources []Source) []string {
 			continue
 		}
 		for _, src := range sources {
+			if !src.resolved {
+				continue
+			}
 			out = append(out, fmt.Sprintf("PKGBUILD source not represented in .SRCINFO: %s %s", src.Location, src.Value))
 		}
 	}
 	for raw, sources := range srcinfoByURL {
 		if _, ok := pkgbuildByURL[raw]; ok {
+			continue
+		}
+		if len(pkgbuildByURL) > 0 && !allSourcesResolved(pkgbuildSources) {
 			continue
 		}
 		for _, src := range sources {
@@ -146,6 +155,15 @@ func compareSourceSets(srcinfoSources, pkgbuildSources []Source) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func allSourcesResolved(sources []Source) bool {
+	for _, src := range sources {
+		if !src.resolved {
+			return false
+		}
+	}
+	return true
 }
 
 func sourcesByNormalizedURL(sources []Source) map[string][]Source {
@@ -160,14 +178,15 @@ func sourcesByNormalizedURL(sources []Source) map[string][]Source {
 	return out
 }
 
-func sourcesFromSRCINFO(path string) ([]Source, error) {
+func sourcesFromSRCINFO(path string) ([]Source, map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
 
 	var out []Source
+	vars := map[string]string{}
 	sc := bufio.NewScanner(f)
 	lineNo := 0
 	for sc.Scan() {
@@ -181,22 +200,29 @@ func sourcesFromSRCINFO(path string) ([]Source, error) {
 			continue
 		}
 		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if isMetadataKey(key) {
+			if _, ok := vars[key]; !ok {
+				vars[key] = value
+			}
+		}
 		if !isSourceKey(key) {
 			continue
 		}
 		out = append(out, Source{
 			Key:      key,
-			Value:    strings.TrimSpace(parts[1]),
+			Value:    value,
 			Location: fmt.Sprintf(".SRCINFO:%d", lineNo),
+			resolved: true,
 		})
 	}
 	if err := sc.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return out, nil
+	return out, vars, nil
 }
 
-func sourcesFromPKGBUILD(path string) ([]Source, []string, error) {
+func sourcesFromPKGBUILD(path string, srcinfoVars map[string]string) ([]Source, []string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, err
@@ -204,16 +230,23 @@ func sourcesFromPKGBUILD(path string) ([]Source, []string, error) {
 	text := string(b)
 	var out []Source
 	var incomplete []string
-	for _, a := range findAssignments(text) {
-		words, complete := parseShellWords(a.Body)
+	assignments := findAssignments(text)
+	for _, a := range assignments {
+		if !isSourceKey(a.Key) {
+			continue
+		}
+		line := lineNumber(text, a.Start)
+		vars := varsBeforeAssignment(assignments, a.Start, srcinfoVars)
+		words, complete := parseShellWords(a.Body, vars)
 		if !complete {
-			incomplete = append(incomplete, fmt.Sprintf("%s in PKGBUILD:%d contains shell expansion or unsupported syntax", a.Key, lineNumber(text, a.Start)))
+			incomplete = append(incomplete, fmt.Sprintf("%s in PKGBUILD:%d contains shell expansion or unsupported syntax", a.Key, line))
 		}
 		for _, word := range words {
 			out = append(out, Source{
 				Key:      a.Key,
-				Value:    word,
-				Location: fmt.Sprintf("PKGBUILD:%d", lineNumber(text, a.Start)),
+				Value:    word.Value,
+				Location: fmt.Sprintf("PKGBUILD:%d", line),
+				resolved: word.Complete,
 			})
 		}
 	}
@@ -221,13 +254,16 @@ func sourcesFromPKGBUILD(path string) ([]Source, []string, error) {
 }
 
 type assignment struct {
-	Key   string
-	Body  string
-	Start int
+	Key      string
+	Body     string
+	Start    int
+	IsArray  bool
+	TopLevel bool
 }
 
 func findAssignments(text string) []assignment {
 	var out []assignment
+	ctx := shellScanContext{}
 	for i := 0; i < len(text); {
 		lineStart := i
 		lineEnd := strings.IndexByte(text[i:], '\n')
@@ -238,27 +274,132 @@ func findAssignments(text string) []assignment {
 		}
 		line := text[lineStart:lineEnd]
 		trimmed := strings.TrimLeft(line, " \t")
-		if strings.HasPrefix(trimmed, "#") {
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			ctx.update(trimmed)
 			i = lineEnd + 1
 			continue
 		}
+		topLevel := ctx.topLevel()
 		key, after, ok := splitAssignment(trimmed)
-		if !ok || !isSourceKey(key) {
+		if !ok {
+			ctx.update(trimmed)
 			i = lineEnd + 1
 			continue
 		}
 		start := lineStart + len(line) - len(trimmed)
 		body := strings.TrimSpace(after)
+		isArray := false
 		if strings.HasPrefix(body, "(") {
+			isArray = true
 			full, end := readArrayBody(text[lineStart+strings.Index(line, after):])
 			body = full
 			i = lineStart + strings.Index(line, after) + end
 		} else {
 			i = lineEnd + 1
 		}
-		out = append(out, assignment{Key: key, Body: body, Start: start})
+		out = append(out, assignment{Key: key, Body: body, Start: start, IsArray: isArray, TopLevel: topLevel})
 	}
 	return out
+}
+
+type shellScanContext struct {
+	braceDepth   int
+	controlDepth int
+}
+
+func (c shellScanContext) topLevel() bool {
+	return c.braceDepth == 0 && c.controlDepth == 0
+}
+
+func (c *shellScanContext) update(line string) {
+	braceDelta, tokens := scanShellLine(line)
+	c.braceDepth += braceDelta
+	if c.braceDepth < 0 {
+		c.braceDepth = 0
+	}
+	if len(tokens) == 0 || !isControlLine(tokens[0]) {
+		return
+	}
+	for _, token := range tokens {
+		switch token {
+		case "if", "for", "while", "until", "case", "select":
+			c.controlDepth++
+		case "fi", "done", "esac":
+			if c.controlDepth > 0 {
+				c.controlDepth--
+			}
+		}
+	}
+}
+
+func isControlLine(firstToken string) bool {
+	switch firstToken {
+	case "if", "for", "while", "until", "case", "select", "fi", "done", "esac", "else", "elif", "then", "do":
+		return true
+	default:
+		return false
+	}
+}
+
+func scanShellLine(line string) (int, []string) {
+	var tokens []string
+	var token strings.Builder
+	inSingle, inDouble, escaped := false, false, false
+	braceDelta := 0
+	flush := func() {
+		if token.Len() > 0 {
+			tokens = append(tokens, token.String())
+			token.Reset()
+		}
+	}
+	for _, r := range line {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		switch r {
+		case '#':
+			if !inSingle && !inDouble {
+				flush()
+				return braceDelta, tokens
+			}
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+				continue
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+				continue
+			}
+		case '{':
+			if !inSingle && !inDouble {
+				braceDelta++
+				flush()
+				continue
+			}
+		case '}':
+			if !inSingle && !inDouble {
+				braceDelta--
+				flush()
+				continue
+			}
+		}
+		if !inSingle && !inDouble && (unicode.IsSpace(r) || strings.ContainsRune(";()", r)) {
+			flush()
+			continue
+		}
+		if !inSingle && !inDouble {
+			token.WriteRune(r)
+		}
+	}
+	flush()
+	return braceDelta, tokens
 }
 
 func splitAssignment(line string) (string, string, bool) {
@@ -310,58 +451,221 @@ func readArrayBody(s string) (string, int) {
 	return strings.TrimPrefix(s, "("), len(s)
 }
 
-func parseShellWords(s string) ([]string, bool) {
-	var words []string
+type shellWord struct {
+	Value    string
+	Complete bool
+}
+
+func parseShellWords(s string, vars map[string]string) ([]shellWord, bool) {
+	var words []shellWord
 	var b strings.Builder
 	inSingle, inDouble, escaped := false, false, false
 	complete := true
+	wordComplete := true
 	flush := func() {
 		if b.Len() > 0 {
-			words = append(words, b.String())
+			words = append(words, shellWord{Value: b.String(), Complete: wordComplete})
 			b.Reset()
+			wordComplete = true
 		}
 	}
-	for _, r := range s {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
 		if escaped {
 			b.WriteRune(r)
 			escaped = false
+			i += size
 			continue
 		}
 		if r == '\\' && !inSingle {
 			escaped = true
+			i += size
 			continue
 		}
 		switch r {
 		case '\'':
 			if !inDouble {
 				inSingle = !inSingle
+				i += size
 				continue
 			}
 		case '"':
 			if !inSingle {
 				inDouble = !inDouble
+				i += size
 				continue
 			}
-		case '$', '`':
+		case '$':
+			if !inSingle {
+				value, raw, consumed, ok := expandShellVariable(s, i, vars)
+				if ok {
+					b.WriteString(value)
+				} else {
+					b.WriteString(raw)
+					complete = false
+					wordComplete = false
+				}
+				i += consumed
+				continue
+			}
+		case '`':
 			if !inSingle {
 				complete = false
+				wordComplete = false
 			}
 		}
 		if unicode.IsSpace(r) && !inSingle && !inDouble {
 			flush()
+			i += size
 			continue
 		}
 		b.WriteRune(r)
+		i += size
 	}
-	flush()
 	if inSingle || inDouble || escaped {
 		complete = false
+		wordComplete = false
 	}
+	flush()
 	return words, complete
+}
+
+func varsBeforeAssignment(assignments []assignment, start int, srcinfoVars map[string]string) map[string]string {
+	vars := map[string]string{}
+	for key, value := range srcinfoVars {
+		vars[key] = value
+	}
+	for _, a := range assignments {
+		if a.Start >= start {
+			break
+		}
+		if !a.TopLevel || isSourceKey(a.Key) || !isVariableKey(a.Key) {
+			continue
+		}
+		words, complete := parseShellWords(a.Body, vars)
+		if !complete || len(words) == 0 {
+			continue
+		}
+		if !a.IsArray && len(words) != 1 {
+			continue
+		}
+		vars[a.Key] = words[0].Value
+	}
+	return vars
+}
+
+func expandShellVariable(s string, start int, vars map[string]string) (string, string, int, bool) {
+	if start+1 >= len(s) {
+		return "$", "$", 1, false
+	}
+	next := s[start+1]
+	if next == '{' {
+		end := strings.IndexByte(s[start+2:], '}')
+		if end < 0 {
+			return "$", "$", 1, false
+		}
+		end += start + 2
+		raw := s[start : end+1]
+		value, ok := resolveBracedVariable(raw[2:len(raw)-1], vars)
+		return value, raw, len(raw), ok
+	}
+	if !isVariableStart(next) {
+		return "$", "$", 1, false
+	}
+	end := start + 2
+	for end < len(s) && isVariablePart(s[end]) {
+		end++
+	}
+	name := s[start+1 : end]
+	value, ok := vars[name]
+	return value, s[start:end], end - start, ok
+}
+
+func resolveBracedVariable(body string, vars map[string]string) (string, bool) {
+	if isVariableKey(body) {
+		value, ok := vars[body]
+		return value, ok
+	}
+	name, op, pattern, ok := splitTrimExpansion(body)
+	if !ok || !isVariableKey(name) || !isLiteralTrimPattern(pattern) {
+		return "", false
+	}
+	value, ok := vars[name]
+	if !ok {
+		return "", false
+	}
+	switch op {
+	case "%", "%%":
+		return strings.TrimSuffix(value, pattern), true
+	case "#", "##":
+		return strings.TrimPrefix(value, pattern), true
+	default:
+		return "", false
+	}
+}
+
+func splitTrimExpansion(body string) (string, string, string, bool) {
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '%', '#':
+			op := body[i : i+1]
+			patternStart := i + 1
+			if patternStart < len(body) && body[patternStart] == body[i] {
+				op = body[i : i+2]
+				patternStart++
+			}
+			return body[:i], op, body[patternStart:], true
+		case ':', '/', '!', '=', '?', '+', '-', '[':
+			return "", "", "", false
+		}
+	}
+	return "", "", "", false
 }
 
 func isSourceKey(key string) bool {
 	return key == "source" || strings.HasPrefix(key, "source_")
+}
+
+func isMetadataKey(key string) bool {
+	switch key {
+	case "pkgbase", "pkgname", "pkgver", "pkgrel", "epoch":
+		return true
+	default:
+		return false
+	}
+}
+
+func isVariableKey(key string) bool {
+	if key == "" || !isVariableStart(key[0]) {
+		return false
+	}
+	for i := 1; i < len(key); i++ {
+		if !isVariablePart(key[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isVariableStart(b byte) bool {
+	return b == '_' || ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z')
+}
+
+func isVariablePart(b byte) bool {
+	return isVariableStart(b) || ('0' <= b && b <= '9')
+}
+
+func isLiteralTrimPattern(pattern string) bool {
+	for _, r := range pattern {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+		switch r {
+		case '$', '`', '\'', '"', '\\', '*', '?', '[', ']':
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeSourceURL(raw string) string {
