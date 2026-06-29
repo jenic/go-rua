@@ -2,16 +2,33 @@ package build
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"go-rua/internal/paths"
 	"go-rua/internal/sandbox"
 )
+
+const sandboxGPGHomeDir = ".rua-gnupg"
+
+var (
+	prepareSandboxGPGHomeFn = prepareSandboxGPGHome
+	packageSigningConfigFn  = packageSigningConfig
+	signPackageFn           = signPackage
+	gpgCommandFn            = exec.Command
+)
+
+type signingConfig struct {
+	Enabled bool
+	GPGKey  string
+}
 
 // BuildDirectory builds a PKGBUILD directory using a Landlock/bwrap sandbox.
 // If seccomp is false, the seccomp denylist is not applied.
@@ -31,17 +48,11 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool
 		}
 	}
 
-	// Prepare env for makepkg outputs to land in dir
-	envs := []string{
-		"HOME", // allow HOME value
-		"PATH", // needed by toolchains and makepkg
-		"FAKEROOTDONTTRYCHOWN=true",
-		fmt.Sprintf("PKGDEST=%s", dir),
-		fmt.Sprintf("SRCDEST=%s", dir),
-		fmt.Sprintf("SRCPKGDEST=%s", dir),
-		fmt.Sprintf("LOGDEST=%s", dir),
-		fmt.Sprintf("BUILDDIR=%s", dir),
+	gpgHome, err := prepareSandboxGPGHomeFn(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to prepare sandbox GPG keyring: %v\n", err)
 	}
+	envs := makepkgEnv(dir, gpgHome)
 
 	ro := []string{"/etc"}
 	rox := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
@@ -67,12 +78,12 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool
 	}
 	// If offline, prefetch sources using .SRCINFO/static PKGBUILD, then build offline
 	if offline {
-		if err := prefetchSources(dir, p, seccomp); err != nil {
+		if err := prefetchSourcesWithGPGHome(dir, p, seccomp, gpgHome); err != nil {
 			return err
 		}
 	}
 
-	args := []string{"makepkg"}
+	args := []string{"makepkg", "--nosign"}
 	if force {
 		args = append(args, "--force")
 	}
@@ -96,7 +107,267 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool
 		AllowWeakOffline: allowWeakOffline,
 		SeccompDenylist:  seccomp,
 	}
-	return sandbox.Run(cfg, args)
+	if err := sandbox.Run(cfg, args); err != nil {
+		return err
+	}
+	signing := packageSigningConfigFn()
+	if !signing.Enabled {
+		return nil
+	}
+	tars, err := packageArtifacts(dir)
+	if err != nil {
+		return err
+	}
+	for _, tar := range tars {
+		if err := signPackageFn(tar, signing.GPGKey); err != nil {
+			return fmt.Errorf("sign package %s: %w", filepath.Base(tar), err)
+		}
+	}
+	return nil
+}
+
+func makepkgEnv(dir, gpgHome string) []string {
+	envs := []string{
+		"HOME", // allow HOME value
+		"PATH", // needed by toolchains and makepkg
+		"FAKEROOTDONTTRYCHOWN=true",
+		fmt.Sprintf("PKGDEST=%s", dir),
+		fmt.Sprintf("SRCDEST=%s", dir),
+		fmt.Sprintf("SRCPKGDEST=%s", dir),
+		fmt.Sprintf("LOGDEST=%s", dir),
+		fmt.Sprintf("BUILDDIR=%s", dir),
+	}
+	if gpgHome != "" {
+		envs = append(envs, fmt.Sprintf("GNUPGHOME=%s", gpgHome))
+	}
+	return envs
+}
+
+func prepareSandboxGPGHome(dir string) (string, error) {
+	gpg, err := exec.LookPath("gpg")
+	if err != nil {
+		return "", nil
+	}
+	export := exec.Command(gpg, "--batch", "--export")
+	pubkeys, err := export.Output()
+	if err != nil {
+		return "", fmt.Errorf("export public keys: %w", err)
+	}
+	if len(bytes.TrimSpace(pubkeys)) == 0 {
+		return "", nil
+	}
+	gpgHome := filepath.Join(dir, sandboxGPGHomeDir)
+	if err := os.RemoveAll(gpgHome); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(gpgHome, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(gpgHome, 0o700); err != nil {
+		return "", err
+	}
+	importCmd := exec.Command(gpg, "--batch", "--homedir", gpgHome, "--import")
+	importCmd.Stdin = bytes.NewReader(pubkeys)
+	if out, err := importCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("import public keys: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return gpgHome, nil
+}
+
+func packageArtifacts(dir string) ([]string, error) {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var tars []string
+	for _, f := range files {
+		name := f.Name()
+		if f.IsDir() || strings.HasSuffix(name, ".sig") {
+			continue
+		}
+		if isPackageArtifact(name) {
+			tars = append(tars, filepath.Join(dir, name))
+		}
+	}
+	sort.Strings(tars)
+	return tars, nil
+}
+
+func isPackageArtifact(name string) bool {
+	for _, suffix := range []string{".pkg.tar", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.gzip", ".pkg.tar.zst", ".pkg.tar.zstd"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func signPackage(path, gpgKey string) error {
+	args := []string{"--yes", "--detach-sign", "--no-armor"}
+	if gpgKey != "" {
+		args = append(args, "--local-user", gpgKey)
+	}
+	args = append(args, path)
+	cmd := gpgCommandFn("gpg", args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+func packageSigningConfig() signingConfig {
+	paths := makepkgConfigPaths()
+	var enabled *bool
+	gpgKey := ""
+	for _, path := range paths {
+		cfg, ok := parseMakepkgConfig(path)
+		if !ok {
+			continue
+		}
+		if cfg.signingSet {
+			v := cfg.signingEnabled
+			enabled = &v
+		}
+		if cfg.gpgKey != "" {
+			gpgKey = cfg.gpgKey
+		}
+	}
+	if enabled == nil {
+		return signingConfig{}
+	}
+	return signingConfig{Enabled: *enabled, GPGKey: gpgKey}
+}
+
+func makepkgConfigPaths() []string {
+	if custom := os.Getenv("MAKEPKG_CONF"); custom != "" {
+		return []string{custom}
+	}
+	paths := []string{"/etc/makepkg.conf"}
+	if entries, err := os.ReadDir("/etc/makepkg.conf.d"); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".conf") {
+				paths = append(paths, filepath.Join("/etc/makepkg.conf.d", entry.Name()))
+			}
+		}
+		sort.Strings(paths[1:])
+	}
+	if home := os.Getenv("HOME"); home != "" {
+		paths = append(paths, filepath.Join(home, ".makepkg.conf"))
+		if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+			paths = append(paths, filepath.Join(xdg, "pacman", "makepkg.conf"))
+		} else {
+			paths = append(paths, filepath.Join(home, ".config", "pacman", "makepkg.conf"))
+		}
+	}
+	return paths
+}
+
+type parsedMakepkgConfig struct {
+	signingSet     bool
+	signingEnabled bool
+	gpgKey         string
+}
+
+func parseMakepkgConfig(path string) (parsedMakepkgConfig, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return parsedMakepkgConfig{}, false
+	}
+	defer f.Close()
+	cfg := parsedMakepkgConfig{}
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(stripShellComment(sc.Text()))
+		if line == "" {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		switch key {
+		case "BUILDENV":
+			if enabled, ok := parseBuildenvSign(val); ok {
+				cfg.signingSet = true
+				cfg.signingEnabled = enabled
+			}
+		case "SIGNPKG":
+			if enabled, ok := parseBoolSetting(val); ok {
+				cfg.signingSet = true
+				cfg.signingEnabled = enabled
+			}
+		case "GPGKEY":
+			cfg.gpgKey = unquoteShellValue(val)
+		}
+	}
+	return cfg, sc.Err() == nil
+}
+
+func parseBuildenvSign(val string) (bool, bool) {
+	val = strings.TrimSpace(val)
+	val = strings.TrimPrefix(val, "(")
+	val = strings.TrimSuffix(val, ")")
+	fields := strings.Fields(val)
+	for _, field := range fields {
+		field = unquoteShellValue(field)
+		switch field {
+		case "sign":
+			return true, true
+		case "!sign":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func parseBoolSetting(val string) (bool, bool) {
+	switch strings.ToLower(unquoteShellValue(val)) {
+	case "1", "y", "yes", "true", "on":
+		return true, true
+	case "0", "n", "no", "false", "off":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func unquoteShellValue(val string) string {
+	val = strings.TrimSpace(val)
+	if len(val) >= 2 {
+		if (val[0] == '\'' && val[len(val)-1] == '\'') || (val[0] == '"' && val[len(val)-1] == '"') {
+			return val[1 : len(val)-1]
+		}
+	}
+	return val
+}
+
+func stripShellComment(line string) string {
+	var quote rune
+	escaped := false
+	for i, r := range line {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			continue
+		}
+		if r == '#' {
+			return line[:i]
+		}
+	}
+	return line
 }
 
 // RunShell opens a shell in dir within minimal sandbox (used for review/inspect)
@@ -187,17 +458,11 @@ func copyRegularFile(src, dst string, perm fs.FileMode) error {
 // If .SRCINFO exists, generate a minimal static PKGBUILD and run `makepkg -f --verifysource -p PKGBUILD.static`
 // otherwise fall back to `makepkg -f --verifysource` on PKGBUILD. Runs with network access enabled.
 func prefetchSources(dir string, p paths.Paths, seccomp bool) error {
-	// Prepare env
-	envs := []string{
-		"HOME",
-		"PATH",
-		"FAKEROOTDONTTRYCHOWN=true",
-		fmt.Sprintf("PKGDEST=%s", dir),
-		fmt.Sprintf("SRCDEST=%s", dir),
-		fmt.Sprintf("SRCPKGDEST=%s", dir),
-		fmt.Sprintf("LOGDEST=%s", dir),
-		fmt.Sprintf("BUILDDIR=%s", dir),
-	}
+	return prefetchSourcesWithGPGHome(dir, p, seccomp, "")
+}
+
+func prefetchSourcesWithGPGHome(dir string, p paths.Paths, seccomp bool, gpgHome string) error {
+	envs := makepkgEnv(dir, gpgHome)
 	ro := []string{"/etc", dir}
 	rox := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
 	rwx := []string{dir}
@@ -245,7 +510,7 @@ func writeStaticPKGBUILDFromSRCINFO(dir, dst string) error {
 		}
 		key := strings.TrimSpace(parts[0])
 		val := strings.TrimSpace(parts[1])
-		if key == "pkgbase" || key == "pkgdesc" || key == "url" || key == "arch" ||
+		if key == "pkgbase" || key == "pkgdesc" || key == "url" || key == "arch" || key == "license" ||
 			key == "pkgver" || key == "pkgrel" || key == "epoch" || key == "pkgname" ||
 			strings.HasPrefix(key, "source") || strings.HasSuffix(key, "sums") || strings.HasPrefix(key, "validpgpkeys") {
 			m[key] = append(m[key], val)
