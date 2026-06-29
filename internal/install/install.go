@@ -49,6 +49,8 @@ var (
 	formatShellAuditFn         = shellaudit.FormatReport
 )
 
+const reviewUpstreamRef = "upstream/master"
+
 // Install clones AUR repos for packages, offers a simple review shell, builds and stages artifacts
 func Install(pkgs []string, p paths.Paths, opt Options) error {
 	if len(pkgs) == 0 {
@@ -119,12 +121,12 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 			reviewDir := p.ReviewDir(pkgbase)
 			if _, err := os.Stat(filepath.Join(reviewDir, ".git")); err != nil {
 				repo := fmt.Sprintf("https://aur.archlinux.org/%s.git", pkgbase)
-				if err := runFn("git", "clone", repo, reviewDir); err != nil {
+				if err := runFn("git", "clone", "--origin", "upstream", repo, reviewDir); err != nil {
 					return fmt.Errorf("git clone failed: %w", err)
 				}
 				_ = runCFn(reviewDir, "git", "checkout", "master")
 			} else {
-				if err := runCFn(reviewDir, "git", "fetch", "--all", "-p"); err != nil {
+				if err := runCFn(reviewDir, "git", "fetch", "upstream", "-p"); err != nil {
 					return err
 				}
 				_ = runCFn(reviewDir, "git", "checkout", "master")
@@ -162,8 +164,8 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 				shellWarningsAcked := shellAuditErr == nil && !shellAuditReport.HasWarnings()
 				for {
 					// Determine upstream merge status
-					merged := (runCQFn(reviewDir, "git", "merge-base", "--is-ancestor", "origin/master", "HEAD") == nil)
-					identical := (runCQFn(reviewDir, "git", "diff", "--quiet", "origin/master") == nil)
+					merged := (runCQFn(reviewDir, "git", "merge-base", "--is-ancestor", reviewUpstreamRef, "HEAD") == nil)
+					identical := (runCQFn(reviewDir, "git", "diff", "--quiet", reviewUpstreamRef) == nil)
 					if merged {
 						fmt.Print("[S]=shellcheck, [N]=namcap, [T]=shell, ")
 						if !urlWarningsAcked {
@@ -207,14 +209,14 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 						}
 					case "d":
 						if merged {
-							_ = runCFn(reviewDir, "git", "--no-pager", "diff", "origin/master..HEAD")
+							_ = runCFn(reviewDir, "git", "--no-pager", "diff", reviewUpstreamRef+"..HEAD")
 						} else {
-							_ = runCFn(reviewDir, "git", "--no-pager", "diff", "HEAD..origin/master")
+							_ = runCFn(reviewDir, "git", "--no-pager", "diff", "HEAD.."+reviewUpstreamRef)
 						}
 					case "m":
 						if !merged {
 							// Attempt a non-fast-forward merge of upstream
-							if err := runCFn(reviewDir, "git", "merge", "--no-edit", "origin/master"); err != nil {
+							if err := runCFn(reviewDir, "git", "merge", "--no-edit", reviewUpstreamRef); err != nil {
 								fmt.Println("Merge failed. Resolve conflicts in the shell and try again.")
 							} else {
 								auditReport, auditErr = sourceAuditFn(reviewDir)
