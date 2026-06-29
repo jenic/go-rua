@@ -43,7 +43,17 @@ func TestWriteStaticPKGBUILDFromSRCINFO(t *testing.T) {
 		t.Skip("only needs linux path semantics")
 	}
 	dir := t.TempDir()
-	srcinfo := `pkgbase = demo\n pkgname = demo\n pkgver = 1.2\n pkgrel = 3\n source = http://example.com/a.tar.gz\n sha256sums = deadbeef\n`
+	srcinfo := `pkgbase = demo
+	pkgdesc = demo package
+	pkgname = demo
+	pkgver = 1.2
+	pkgrel = 3
+	url = https://example.com/demo
+	arch = x86_64
+	license = MIT
+	source = http://example.com/a.tar.gz
+	sha256sums = deadbeef
+`
 	if err := os.WriteFile(filepath.Join(dir, ".SRCINFO"), []byte(srcinfo), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -56,8 +66,63 @@ func TestWriteStaticPKGBUILDFromSRCINFO(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	if !strings.HasPrefix(s, "#!/bin/bash") {
-		t.Fatalf("PKGBUILD header missing: %q", s)
+	for _, want := range []string{
+		"pkgbase='demo'",
+		"pkgdesc='demo package'",
+		"pkgname=('demo')",
+		"pkgver='1.2'",
+		"pkgrel='3'",
+		"url='https://example.com/demo'",
+		"arch=('x86_64')",
+		"license=('MIT')",
+		"source=('http://example.com/a.tar.gz')",
+		"sha256sums=('deadbeef')",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("PKGBUILD.static missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "set -") {
+		t.Fatalf("PKGBUILD.static must not mutate makepkg shell options:\n%s", s)
+	}
+}
+
+func TestParseMakepkgConfigSigning(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "makepkg.conf")
+	content := `BUILDENV=(!distcc color !ccache check sign)
+GPGKEY="ABC123"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, ok := parseMakepkgConfig(path)
+	if !ok {
+		t.Fatal("parseMakepkgConfig failed")
+	}
+	if !cfg.signingSet || !cfg.signingEnabled {
+		t.Fatalf("signing config = %+v, want enabled", cfg)
+	}
+	if cfg.gpgKey != "ABC123" {
+		t.Fatalf("gpgKey = %q, want ABC123", cfg.gpgKey)
+	}
+}
+
+func TestParseMakepkgConfigSigningDisabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "makepkg.conf")
+	content := `BUILDENV=(distcc color ccache check !sign)
+SIGNPKG=no
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, ok := parseMakepkgConfig(path)
+	if !ok {
+		t.Fatal("parseMakepkgConfig failed")
+	}
+	if !cfg.signingSet || cfg.signingEnabled {
+		t.Fatalf("signing config = %+v, want disabled", cfg)
 	}
 }
 

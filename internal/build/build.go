@@ -270,9 +270,15 @@ func writeStaticPKGBUILDFromSRCINFO(dir, dst string) error {
 		b.WriteString(")\n")
 		return b.String()
 	}
-	// multi-keys to emit
-	keys := []string{
-		"pkgname", "pkgver", "pkgrel", "epoch",
+	scalar := func(name string, vals []string) string {
+		if len(vals) == 0 {
+			return ""
+		}
+		return fmt.Sprintf("%s='%s'\n", name, strings.ReplaceAll(vals[0], "'", "'\\''"))
+	}
+	scalarKeys := []string{"pkgbase", "pkgver", "pkgrel", "epoch", "pkgdesc", "url"}
+	arrayKeys := []string{
+		"pkgname", "arch", "license",
 		"source", "source_aarch64", "source_i686", "source_x86_64",
 		"validpgpkeys",
 		"md5sums", "sha1sums", "sha224sums", "sha256sums", "sha384sums", "sha512sums", "b2sums",
@@ -285,8 +291,13 @@ func writeStaticPKGBUILDFromSRCINFO(dir, dst string) error {
 		"b2sums_aarch64", "b2sums_i686", "b2sums_x86_64",
 	}
 	b := &strings.Builder{}
-	b.WriteString("#!/bin/bash\nset -eu\n")
-	for _, k := range keys {
+	b.WriteString("# Generated from .SRCINFO for source verification only.\n")
+	for _, k := range scalarKeys {
+		if vals, ok := m[k]; ok {
+			b.WriteString(scalar(k, vals))
+		}
+	}
+	for _, k := range arrayKeys {
 		if vals, ok := m[k]; ok {
 			b.WriteString(arr(k, vals))
 		}
