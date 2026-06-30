@@ -467,7 +467,7 @@ func prefetchSourcesWithGPGHome(dir string, p paths.Paths, seccomp bool, gpgHome
 	rox := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
 	rwx := []string{dir}
 
-	args := []string{"makepkg", "-f", "--verifysource"}
+	args := []string{"makepkg", "--nosign", "-f", "--verifysource"}
 	// If .SRCINFO present, generate PKGBUILD.static
 	if _, err := os.Stat(filepath.Join(dir, ".SRCINFO")); err == nil {
 		static := filepath.Join(dir, "PKGBUILD.static")

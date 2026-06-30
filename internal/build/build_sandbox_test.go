@@ -34,6 +34,11 @@ func TestPrefetchSourcesUsesStatic(t *testing.T) {
 	if err := prefetchSources(dir, p, true); err != nil {
 		t.Fatalf("prefetchSources err: %v", err)
 	}
+	for _, want := range []string{"makepkg", "--nosign", "--verifysource", "-p", "PKGBUILD.static"} {
+		if !stringSliceContains(sandboxArgs, want) {
+			t.Fatalf("prefetch sandbox args missing %q: %v", want, sandboxArgs)
+		}
+	}
 }
 
 func TestPrefetchSourcesFailsWhenStaticPKGBUILDGenerationFails(t *testing.T) {
@@ -47,4 +52,13 @@ func TestPrefetchSourcesFailsWhenStaticPKGBUILDGenerationFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "generate static PKGBUILD") {
 		t.Fatalf("expected static PKGBUILD error, got %v", err)
 	}
+}
+
+func stringSliceContains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
