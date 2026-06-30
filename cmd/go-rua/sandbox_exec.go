@@ -64,6 +64,12 @@ func sandboxExec() {
 		fmt.Fprintln(os.Stderr, "sandbox-exec: no command provided")
 		osExitFn(99)
 	}
+	selfPath := os.Args[0]
+	if !strings.HasPrefix(selfPath, "/") {
+		if ap, err := absPathFn(selfPath); err == nil {
+			selfPath = ap
+		}
+	}
 
 	// If this invocation is seccomp-only (launched inside bwrap), apply seccomp and exec target.
 	if os.Getenv("RUA_SECCOMP_ONLY") == "1" {
@@ -171,13 +177,7 @@ func sandboxExec() {
 	// Optionally wrap with bubblewrap for network isolation
 	if useBwrap {
 		// Inside bwrap, re-enter this binary in seccomp-only mode so that bwrap can perform needed syscalls first.
-		self := os.Args[0]
-		if !strings.HasPrefix(self, "/") {
-			if ap, err := filepath.Abs(self); err == nil {
-				self = ap
-			}
-		}
-		bwargs := buildBubblewrapArgs(cfg, self, args)
+		bwargs := buildBubblewrapArgs(cfg, selfPath, args)
 		// Signal to inner invocation to only apply seccomp
 		childEnv = append(childEnv, "RUA_SANDBOX_CFG="+cfgJSON, "RUA_SECCOMP_ONLY=1")
 		if err := syscallExecFn(bwrapPath, bwargs, childEnv); err != nil {
