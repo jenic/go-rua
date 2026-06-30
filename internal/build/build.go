@@ -54,7 +54,7 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool
 	}
 	envs := makepkgEnv(dir, gpgHome)
 
-	ro := []string{"/etc"}
+	ro := []string{"/etc", "/var/lib/pacman"}
 	rox := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
 	rwx := []string{dir}
 

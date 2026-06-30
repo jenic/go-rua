@@ -88,6 +88,9 @@ func TestBuildDirectoryMainSandboxExcludesGPGHome(t *testing.T) {
 	if strings.Contains(allRO, gnupg) {
 		t.Fatalf("main build sandbox must not include GNUPGHOME, cfg=%+v", cfg)
 	}
+	if !stringListContains(cfg.RO, "/var/lib/pacman") {
+		t.Fatalf("main build sandbox must expose pacman database read-only, cfg=%+v", cfg)
+	}
 	if envValue(cfg.Env, "GNUPGHOME") != sandboxGPGHome {
 		t.Fatalf("main build sandbox GNUPGHOME = %q, want %q; cfg=%+v", envValue(cfg.Env, "GNUPGHOME"), sandboxGPGHome, cfg)
 	}
@@ -211,6 +214,10 @@ func envValue(env []string, key string) string {
 }
 
 func contains(items []string, want string) bool {
+	return stringListContains(items, want)
+}
+
+func stringListContains(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {
 			return true
