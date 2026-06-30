@@ -26,7 +26,9 @@ func TestPrefetchSourcesUsesStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	// stub sandbox to succeed; we don't validate args deeply here
+	var sandboxArgs []string
 	sandbox.SetExecCommandForTests(func(name string, arg ...string) *exec.Cmd {
+		sandboxArgs = append([]string{name}, arg...)
 		return exec.Command("/bin/true")
 	})
 	defer sandbox.SetExecCommandForTests(exec.Command)
