@@ -512,7 +512,7 @@ func writeStaticPKGBUILDFromSRCINFO(dir, dst string) error {
 		val := strings.TrimSpace(parts[1])
 		if key == "pkgbase" || key == "pkgdesc" || key == "url" || key == "arch" || key == "license" ||
 			key == "pkgver" || key == "pkgrel" || key == "epoch" || key == "pkgname" ||
-			strings.HasPrefix(key, "source") || strings.HasSuffix(key, "sums") || strings.HasPrefix(key, "validpgpkeys") {
+			strings.HasPrefix(key, "source") || isChecksumKey(key) || strings.HasPrefix(key, "validpgpkeys") {
 			m[key] = append(m[key], val)
 		}
 	}
@@ -568,6 +568,15 @@ func writeStaticPKGBUILDFromSRCINFO(dir, dst string) error {
 		}
 	}
 	return os.WriteFile(dst, []byte(b.String()), 0o644)
+}
+
+func isChecksumKey(key string) bool {
+	for _, prefix := range []string{"md5sums", "sha1sums", "sha224sums", "sha256sums", "sha384sums", "sha512sums", "b2sums"} {
+		if key == prefix || strings.HasPrefix(key, prefix+"_") {
+			return true
+		}
+	}
+	return false
 }
 
 // readWrapArgs parses ~/.config/rua/wrap_args.d entries to include additional binds.

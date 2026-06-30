@@ -52,7 +52,9 @@ func TestWriteStaticPKGBUILDFromSRCINFO(t *testing.T) {
 	arch = x86_64
 	license = MIT
 	source = http://example.com/a.tar.gz
+	source_x86_64 = demo-x86_64.zip::https://example.com/demo-x86_64.zip
 	sha256sums = deadbeef
+	sha256sums_x86_64 = cafebabe
 `
 	if err := os.WriteFile(filepath.Join(dir, ".SRCINFO"), []byte(srcinfo), 0o644); err != nil {
 		t.Fatal(err)
@@ -76,7 +78,9 @@ func TestWriteStaticPKGBUILDFromSRCINFO(t *testing.T) {
 		"arch=('x86_64')",
 		"license=('MIT')",
 		"source=('http://example.com/a.tar.gz')",
+		"source_x86_64=('demo-x86_64.zip::https://example.com/demo-x86_64.zip')",
 		"sha256sums=('deadbeef')",
+		"sha256sums_x86_64=('cafebabe')",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("PKGBUILD.static missing %q:\n%s", want, s)
