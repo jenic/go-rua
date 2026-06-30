@@ -113,6 +113,16 @@ func sandboxExec() {
 		}
 	}
 
+	// Build sanitized environment before resolving helper binaries. sandbox-exec
+	// itself is launched with only RUA_SANDBOX_CFG, so its process environment
+	// may not contain PATH even when the configured child environment should.
+	childEnv := buildEnv(cfg.Env)
+	pathVal := pathFromEnv(childEnv)
+	if pathVal == "" {
+		pathVal = "/usr/bin:/bin"
+	}
+	_ = os.Setenv("PATH", pathVal)
+
 	// Decide execution strategy: bubblewrap for net isolation if requested/available, else Landlock-only.
 	useBwrap := false
 	bwrapPath := ""
@@ -139,23 +149,9 @@ func sandboxExec() {
 		}
 	}
 
-	// Build sanitized environment for the target
-	childEnv := buildEnv(cfg.Env)
-
 	// Resolve the command path if needed
 	prog := args[0]
 	if !strings.Contains(prog, "/") {
-		// Derive PATH from childEnv
-		var pathVal string
-		for _, e := range childEnv {
-			if strings.HasPrefix(e, "PATH=") {
-				pathVal = strings.TrimPrefix(e, "PATH=")
-			}
-		}
-		if pathVal == "" {
-			pathVal = "/usr/bin:/bin"
-		}
-		_ = os.Setenv("PATH", pathVal)
 		if p, err := exec.LookPath(prog); err == nil {
 			prog = p
 		}
@@ -379,6 +375,15 @@ func buildEnv(allowed []string) []string {
 		out = append(out, "PATH=/usr/bin:/bin")
 	}
 	return out
+}
+
+func pathFromEnv(env []string) string {
+	for _, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			return strings.TrimPrefix(e, "PATH=")
+		}
+	}
+	return ""
 }
 
 // syscallExec performs an execve with given program, args (including argv0), and env.
