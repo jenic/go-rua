@@ -17,7 +17,7 @@ GOFLAGS=-ldflags="${LDFLAGS}" -buildmode=pie
 GOENV := GOPATH=$(GOPATH) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOTOOLCHAIN=$(GOTOOLCHAIN)
 CACHE_DIRS := $(GOPATH) $(GOCACHE) $(GOMODCACHE)
 
-.PHONY: help build run fmt vet test check smoke clean
+.PHONY: help build run fmt vet test check smoke install clean
 
 help: ## Show available make targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .+$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -45,6 +45,9 @@ smoke: build ## Run a short integration smoke test (best-effort)
 	./scripts/smoke.sh
 
 check: fmt vet test build ## Format, vet, test, and build
+
+install: fmt test build ## Install binary to /usr/local/bin
+	sudo install -v -C -o root -g root -m 0755 $(OUT) /usr/local/bin/$(notdir $(OUT))
 
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR)
