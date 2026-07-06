@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -35,5 +36,45 @@ func TestRunAndRunCaptureHook(t *testing.T) {
 	out, _, err := RunCapture(cfg, []string{"echo", "hi"})
 	if err != nil || out != "hello" {
 		t.Fatalf("RunCapture unexpected: out=%q err=%v", out, err)
+	}
+}
+
+func TestRunUsesExecutablePath(t *testing.T) {
+	oldExecutable := executableFn
+	executableFn = func() (string, error) { return "/usr/local/bin/go-rua", nil }
+	defer func() { executableFn = oldExecutable }()
+
+	var capturedName string
+	SetExecCommandForTests(func(name string, arg ...string) *exec.Cmd {
+		capturedName = name
+		return exec.Command("bash", "-lc", "true")
+	})
+	defer SetExecCommandForTests(exec.Command)
+
+	if err := Run(Config{}, []string{"echo", "ok"}); err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if capturedName != "/usr/local/bin/go-rua" {
+		t.Fatalf("sandbox launcher = %q, want resolved executable path", capturedName)
+	}
+}
+
+func TestRunFallsBackToArgsZero(t *testing.T) {
+	oldExecutable := executableFn
+	executableFn = func() (string, error) { return "", errors.New("no executable") }
+	defer func() { executableFn = oldExecutable }()
+
+	var capturedName string
+	SetExecCommandForTests(func(name string, arg ...string) *exec.Cmd {
+		capturedName = name
+		return exec.Command("bash", "-lc", "true")
+	})
+	defer SetExecCommandForTests(exec.Command)
+
+	if err := Run(Config{}, []string{"echo", "ok"}); err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if capturedName == "" {
+		t.Fatalf("expected fallback launcher path")
 	}
 }

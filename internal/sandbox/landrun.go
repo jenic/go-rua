@@ -24,7 +24,10 @@ type Config struct {
 }
 
 // execCommandHook allows tests to override process spawning.
-var execCommandHook = exec.Command
+var (
+	execCommandHook = exec.Command
+	executableFn    = os.Executable
+)
 
 // Run executes a command inside a Landlock sandbox via our embedded runner
 func Run(cfg Config, argv []string) error {
@@ -35,8 +38,8 @@ func Run(cfg Config, argv []string) error {
 	if err != nil {
 		return err
 	}
-	// Re-enter our own binary with the hidden subcommand "sandbox-exec"
-	self := os.Args[0]
+	// Re-enter our own binary with the hidden subcommand "sandbox-exec".
+	self := selfExecutable()
 	cmd := execCommandHook(self, append([]string{"sandbox-exec"}, argv...)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -55,7 +58,7 @@ func RunCapture(cfg Config, argv []string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	self := os.Args[0]
+	self := selfExecutable()
 	cmd := execCommandHook(self, append([]string{"sandbox-exec"}, argv...)...)
 	cmd.Env = append([]string{}, "RUA_SANDBOX_CFG="+string(payload))
 	out, err := cmd.CombinedOutput()
@@ -68,4 +71,11 @@ func RunCapture(cfg Config, argv []string) (string, string, error) {
 // SetExecCommandForTests overrides the command runner in tests.
 func SetExecCommandForTests(fn func(name string, arg ...string) *exec.Cmd) {
 	execCommandHook = fn
+}
+
+func selfExecutable() string {
+	if exe, err := executableFn(); err == nil && exe != "" {
+		return exe
+	}
+	return os.Args[0]
 }

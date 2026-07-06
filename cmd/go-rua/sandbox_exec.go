@@ -21,6 +21,7 @@ var (
 	prSetNoNewPrivsFn      = prSetNoNewPrivs
 	lookPathFn             = exec.LookPath
 	absPathFn              = filepath.Abs
+	executableFn           = os.Executable
 	osExitFn               = os.Exit
 )
 
@@ -64,12 +65,7 @@ func sandboxExec() {
 		fmt.Fprintln(os.Stderr, "sandbox-exec: no command provided")
 		osExitFn(99)
 	}
-	selfPath := os.Args[0]
-	if !strings.HasPrefix(selfPath, "/") {
-		if ap, err := absPathFn(selfPath); err == nil {
-			selfPath = ap
-		}
-	}
+	selfPath := selfExecutablePath()
 
 	// If this invocation is seccomp-only (launched inside bwrap), apply seccomp and exec target.
 	if os.Getenv("RUA_SECCOMP_ONLY") == "1" {
@@ -246,6 +242,19 @@ func buildBubblewrapArgs(cfg sandboxExecConfig, self string, targetArgs []string
 	}
 	bwargs = append(bwargs, "--", self, "sandbox-exec")
 	return append(bwargs, targetArgs...)
+}
+
+func selfExecutablePath() string {
+	if exe, err := executableFn(); err == nil && exe != "" {
+		return exe
+	}
+	selfPath := os.Args[0]
+	if !strings.HasPrefix(selfPath, "/") {
+		if ap, err := absPathFn(selfPath); err == nil {
+			selfPath = ap
+		}
+	}
+	return selfPath
 }
 
 func parentDirsForBinds(binds []bwrapBind) []string {

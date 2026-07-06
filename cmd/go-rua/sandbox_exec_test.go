@@ -237,6 +237,10 @@ func TestSandboxExecBubblewrapLookupUsesConfiguredPATH(t *testing.T) {
 }
 
 func TestSandboxExecBubblewrapSelfPathResolvedBeforeWorkDir(t *testing.T) {
+	oldExecutable := executableFn
+	executableFn = func() (string, error) { return "", errors.New("no executable") }
+	defer func() { executableFn = oldExecutable }()
+
 	oldLook := lookPathFn
 	lookPathFn = func(f string) (string, error) {
 		if f == "bwrap" {
@@ -280,6 +284,56 @@ func TestSandboxExecBubblewrapSelfPathResolvedBeforeWorkDir(t *testing.T) {
 
 	workDir := t.TempDir()
 	t.Setenv("RUA_SANDBOX_CFG", fmt.Sprintf(`{"Env":["PATH=/usr/bin:/bin"],"WorkDir":%q,"UseBubblewrap":true,"UnrestrictedNet":false}`, workDir))
+	sandboxExec()
+	if !called {
+		t.Fatalf("bwrap path not executed")
+	}
+}
+
+func TestSandboxExecBubblewrapUsesExecutablePathForBareArgsZero(t *testing.T) {
+	oldExecutable := executableFn
+	executableFn = func() (string, error) { return "/usr/local/bin/go-rua", nil }
+	defer func() { executableFn = oldExecutable }()
+
+	oldAbs := absPathFn
+	absPathFn = func(path string) (string, error) {
+		return filepath.Join("/stale/build/dir", path), nil
+	}
+	defer func() { absPathFn = oldAbs }()
+
+	oldLook := lookPathFn
+	lookPathFn = func(f string) (string, error) {
+		if f == "bwrap" {
+			return "/usr/bin/bwrap", nil
+		}
+		return f, nil
+	}
+	defer func() { lookPathFn = oldLook }()
+
+	called := false
+	oldSys := syscallExecFn
+	syscallExecFn = func(prog string, args []string, env []string) error {
+		called = true
+		if prog != "/usr/bin/bwrap" {
+			t.Fatalf("expected resolved bwrap path, got %q", prog)
+		}
+		if !containsSubsequence(args, "--ro-bind", "/usr/local/bin/go-rua", "/usr/local/bin/go-rua") {
+			t.Fatalf("expected installed executable path to be bound, got %v", args)
+		}
+		if containsSubsequence(args, "--ro-bind", "/stale/build/dir/go-rua", "/stale/build/dir/go-rua") {
+			t.Fatalf("must not bind stale cwd-relative executable path, got %v", args)
+		}
+		return nil
+	}
+	defer func() { syscallExecFn = oldSys }()
+	oldExit := osExitFn
+	osExitFn = func(c int) { t.Fatalf("unexpected exit %d", c) }
+	defer func() { osExitFn = oldExit }()
+	oldArgs := os.Args
+	os.Args = []string{"go-rua", "sandbox-exec", "/bin/true"}
+	defer func() { os.Args = oldArgs }()
+
+	t.Setenv("RUA_SANDBOX_CFG", `{"Env":["PATH=/usr/bin:/bin"],"UseBubblewrap":true,"UnrestrictedNet":false}`)
 	sandboxExec()
 	if !called {
 		t.Fatalf("bwrap path not executed")
