@@ -26,7 +26,7 @@ func mrespCLI2(status int, body string) *http.Response {
 }
 
 func TestHelpCmdTopics(t *testing.T) {
-	topics := []string{"builddir", "shellcheck", "namcap", "install", "search", "info", "tarcheck", "upgrade", "unknown"}
+	topics := []string{"builddir", "shellcheck", "namcap", "install", "search", "info", "tarcheck", "upgrade", "version", "unknown"}
 	for _, tp := range topics {
 		helpCmd([]string{tp})
 	}

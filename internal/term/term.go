@@ -33,8 +33,11 @@ var enabled = computeEnabled()
 
 func Enabled() bool { return enabled }
 
-// RecomputeForTests recalculates enablement using current env (testing helper).
-func RecomputeForTests() { enabled = computeEnabled() }
+// Recompute recalculates color enablement from the current environment.
+func Recompute() { enabled = computeEnabled() }
+
+// RecomputeForTests retains the existing test helper API.
+func RecomputeForTests() { Recompute() }
 
 func wrap(code, s string) string {
 	if !enabled || s == "" {

@@ -91,15 +91,6 @@ if [ "$1" = "IgnorePkg" ]; then echo "ignored"; exit 0; fi
 	}
 }
 
-func TestInfoAndUsageHelpers(t *testing.T) {
-	// Just ensure helpers don't panic
+func TestBuildDepsNote(t *testing.T) {
 	buildDepsNote()
-	infoUsage()
-	upgradeUsage()
-	searchUsage()
-	installUsage()
-	namcapUsage()
-	shellcheckUsage()
-	tarcheckUsage()
-	builddirUsage()
 }

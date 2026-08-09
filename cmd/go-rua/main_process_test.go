@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"go-rua/internal/term"
 )
 
 func TestMainProcessEntryExit(t *testing.T) {
@@ -45,7 +47,7 @@ func TestMainProcessEntryExit(t *testing.T) {
 		{
 			name:       "help command prints usage",
 			args:       []string{"help"},
-			wantStdout: []string{"go-rua: AUR helper", "Usage:", "install [--online]"},
+			wantStdout: []string{"go-rua: AUR helper", "Usage:", "go-rua help <command>", "Global options:"},
 		},
 		{
 			name:       "help alias prints usage",
@@ -55,7 +57,29 @@ func TestMainProcessEntryExit(t *testing.T) {
 		{
 			name:       "help topic dispatches to command usage",
 			args:       []string{"help", "install"},
-			wantStdout: []string{"Usage: go-rua install", "--install-repo-deps"},
+			wantStdout: []string{"Review, build, stage, and install AUR packages.", "Usage:", "go-rua install", "--install-repo-deps", "Review controls:", "Examples:"},
+		},
+		{
+			name:       "command help flag prints detailed help",
+			args:       []string{"upgrade", "--help"},
+			wantStdout: []string{"Review, build, and install available AUR upgrades.", "--printonly", "Exit status:", "go-rua upgrade --plan"},
+		},
+		{
+			name:       "version command has dedicated help",
+			args:       []string{"version", "--help"},
+			wantStdout: []string{"Print the go-rua version.", "Usage:", "go-rua version", "Examples:"},
+		},
+		{
+			name:       "removed install flag is a usage error",
+			args:       []string{"install", "--install", "yay"},
+			wantCode:   2,
+			wantStdout: []string{"flag provided but not defined: -install", "go-rua install [options]"},
+		},
+		{
+			name:       "removed upgrade flag is a usage error",
+			args:       []string{"upgrade", "--apply"},
+			wantCode:   2,
+			wantStdout: []string{"flag provided but not defined: -apply", "go-rua upgrade [options]"},
 		},
 	}
 
@@ -81,19 +105,22 @@ func TestMainProcessEntryExit(t *testing.T) {
 
 func TestMainProcessColorFlagHandling(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      []string
-		wantColor string
+		name        string
+		args        []string
+		wantColor   string
+		wantEnabled string
 	}{
 		{
-			name:      "equals form before command",
-			args:      []string{"--color=always", "version"},
-			wantColor: "always",
+			name:        "equals form before command",
+			args:        []string{"--color=always", "version"},
+			wantColor:   "always",
+			wantEnabled: "true",
 		},
 		{
-			name:      "split form before command",
-			args:      []string{"--color", "never", "version"},
-			wantColor: "never",
+			name:        "split form before command",
+			args:        []string{"--color", "never", "version"},
+			wantColor:   "never",
+			wantEnabled: "false",
 		},
 		{
 			name:      "equals form after command is stripped before dispatch",
@@ -113,6 +140,32 @@ func TestMainProcessColorFlagHandling(t *testing.T) {
 			}
 			if !strings.Contains(stderr, "RUA_COLOR="+tt.wantColor) {
 				t.Fatalf("color env not set to %q\nstdout:\n%s\nstderr:\n%s", tt.wantColor, stdout, stderr)
+			}
+			if tt.wantEnabled != "" && !strings.Contains(stderr, "TERM_ENABLED="+tt.wantEnabled) {
+				t.Fatalf("terminal color state = unexpected, want %s\nstdout:\n%s\nstderr:\n%s", tt.wantEnabled, stdout, stderr)
+			}
+		})
+	}
+}
+
+func TestMainProcessColorFlagRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "invalid value", args: []string{"--color=rainbow", "version"}, want: "invalid --color value"},
+		{name: "missing value", args: []string{"--color"}, want: "--color requires a value"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, stderr, code := runMainProcess(t, "main", "color-version", tt.args...)
+			if code != 2 {
+				t.Fatalf("exit code = %d, want 2\nstderr:\n%s", code, stderr)
+			}
+			if !strings.Contains(stderr, tt.want) {
+				t.Fatalf("stderr missing %q: %q", tt.want, stderr)
 			}
 		})
 	}
@@ -237,7 +290,7 @@ func TestMainProcessHelper(t *testing.T) {
 		main()
 	case "main-color":
 		main()
-		fmt.Fprintln(os.Stderr, "RUA_COLOR="+os.Getenv("RUA_COLOR"))
+		fmt.Fprintf(os.Stderr, "RUA_COLOR=%s TERM_ENABLED=%t\n", os.Getenv("RUA_COLOR"), term.Enabled())
 	case "fatalf":
 		fatalf("fatal path: %s", "boom")
 	default:

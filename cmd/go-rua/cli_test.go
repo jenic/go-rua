@@ -130,7 +130,7 @@ func TestUpgradeCmdPlanPrints(t *testing.T) {
 	}
 }
 
-func TestUpgradeCmdDefaultsToPlan(t *testing.T) {
+func TestUpgradeCmdPlanDoesNotInstall(t *testing.T) {
 	restoreCLISeams(t)
 
 	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
@@ -149,16 +149,16 @@ func TestUpgradeCmdDefaultsToPlan(t *testing.T) {
 		return nil
 	}
 
-	out, _ := captureOut(func() { upgradeCmd(nil) })
+	out, _ := captureOut(func() { upgradeCmd([]string{"--plan"}) })
 	if !strings.Contains(out, "Plan:") || !strings.Contains(out, "Build order: foo") {
-		t.Fatalf("unexpected default upgrade out: %q", out)
+		t.Fatalf("unexpected upgrade plan out: %q", out)
 	}
 	if installCalled {
-		t.Fatalf("upgrade without --apply must not install")
+		t.Fatal("upgrade --plan must not install")
 	}
 }
 
-func TestUpgradeCmdApplyUsesInteractiveInstall(t *testing.T) {
+func TestUpgradeCmdDefaultsToInteractiveInstall(t *testing.T) {
 	restoreCLISeams(t)
 
 	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
@@ -180,11 +180,105 @@ func TestUpgradeCmdApplyUsesInteractiveInstall(t *testing.T) {
 		return nil
 	}
 
-	captureOut(func() { upgradeCmd([]string{"--apply"}) })
+	captureOut(func() { upgradeCmd(nil) })
 	if got.NonInteractive {
-		t.Fatalf("upgrade --apply must keep review interactive")
+		t.Fatal("upgrade must keep review interactive")
 	}
 	if !got.InstallBuilt {
-		t.Fatalf("upgrade --apply should install built artifacts")
+		t.Fatal("upgrade should install built artifacts by default")
+	}
+}
+
+func TestUpgradeCmdDefaultReportsPackagesMissingFromAUR(t *testing.T) {
+	restoreCLISeams(t)
+
+	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
+		return []pacman.ForeignPkg{{Name: "foo", Version: "1"}, {Name: "ghost", Version: "1"}}, nil
+	}
+	aurInfoFn = func([]string) ([]aur.Package, error) {
+		return []aur.Package{{Name: "foo", Version: "2"}}, nil
+	}
+	vercmpFn = func(string, string) (int, error) { return -1, nil }
+	getIgnoredPkgsFn = func() ([]string, error) { return nil, nil }
+	installPlanFn = func([]string) (installpkg.Plan, error) {
+		return installpkg.Plan{BuildOrder: []string{"foo"}}, nil
+	}
+	pathsInitFn = func() paths.Paths { return paths.Paths{} }
+	installed := false
+	installInstallFn = func([]string, paths.Paths, installpkg.Options) error {
+		installed = true
+		return nil
+	}
+
+	out, _ := captureOut(func() { upgradeCmd(nil) })
+	if !strings.Contains(out, "installed packages not found in AUR: ghost") {
+		t.Fatalf("upgrade output missing nonexistent package note: %q", out)
+	}
+	if !installed {
+		t.Fatal("upgrade did not continue with the available outdated package")
+	}
+}
+
+func TestUpgradeCmdDefaultStopsWhenOnlyPackagesMissingFromAUR(t *testing.T) {
+	restoreCLISeams(t)
+
+	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
+		return []pacman.ForeignPkg{{Name: "ghost", Version: "1"}}, nil
+	}
+	aurInfoFn = func([]string) ([]aur.Package, error) { return nil, nil }
+	getIgnoredPkgsFn = func() ([]string, error) { return nil, nil }
+	workCalls := 0
+	installPlanFn = func([]string) (installpkg.Plan, error) {
+		workCalls++
+		return installpkg.Plan{}, nil
+	}
+	pathsInitFn = func() paths.Paths {
+		workCalls++
+		return paths.Paths{}
+	}
+	installInstallFn = func([]string, paths.Paths, installpkg.Options) error {
+		workCalls++
+		return nil
+	}
+
+	out, _ := captureOut(func() { upgradeCmd(nil) })
+	if !strings.Contains(out, "installed packages not found in AUR: ghost") {
+		t.Fatalf("upgrade output missing nonexistent package note: %q", out)
+	}
+	if workCalls != 0 {
+		t.Fatalf("upgrade started %d plan, path, or install operations without outdated packages", workCalls)
+	}
+}
+
+func TestInstallCmdInstallsByDefaultUnlessStageOnly(t *testing.T) {
+	restoreCLISeams(t)
+
+	pathsInitFn = func() paths.Paths {
+		d := t.TempDir()
+		return paths.Paths{ConfigDir: d, CacheBuildDir: d, DataCheckedTars: d}
+	}
+	aurInfoFn = func([]string) ([]aur.Package, error) { return nil, nil }
+	summarizeAURFn = func([]string, []aur.Package) (installpkg.DepSummary, error) {
+		return installpkg.DepSummary{}, nil
+	}
+	formatSummaryFn = func(installpkg.DepSummary) string { return "" }
+
+	var got []installpkg.Options
+	installInstallFn = func(_ []string, _ paths.Paths, opt installpkg.Options) error {
+		got = append(got, opt)
+		return nil
+	}
+
+	captureOut(func() { installCmd([]string{"pkg"}) })
+	captureOut(func() { installCmd([]string{"--stage-only", "pkg"}) })
+
+	if len(got) != 2 {
+		t.Fatalf("install calls = %d, want 2", len(got))
+	}
+	if !got[0].InstallBuilt {
+		t.Fatal("install should install built artifacts by default")
+	}
+	if got[1].InstallBuilt {
+		t.Fatal("install --stage-only should not install built artifacts")
 	}
 }

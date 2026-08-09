@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -48,22 +49,7 @@ var (
 )
 
 func usage() {
-	fmt.Println("go-rua: AUR helper (Go), sandboxed by Landlock")
-	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println("  go-rua [command] [options]")
-	fmt.Println()
-	fmt.Println("Commands:")
-	fmt.Println("  builddir [--online] [--force] [dir]     Build a PKGBUILD directory in sandbox (offline by default)")
-	fmt.Println("  shellcheck [file|dir]                   Run shellcheck for PKGBUILD (sandboxed)")
-	fmt.Println("  namcap [file|dir]                       Run namcap for PKGBUILD (sandboxed)")
-	fmt.Println("  install [--online] [--force] [--install] [--asdeps] [--plan] <pkgs..>  Clone AUR repos, review, build, stage, optional install")
-	fmt.Println("  search <keywords...>                    Search AUR by name/desc")
-	fmt.Println("  info <pkg1> [pkg2 ...]                  Show AUR package info")
-	fmt.Println("  tarcheck <archive>                      Inspect built package archive (interactive)")
-	fmt.Println("  upgrade [--apply] [--devel] [--ignore=<pkg1,pkg2>]  Plan upgrades by default; --apply builds and installs")
-	fmt.Println("  version                                 Show version")
-	fmt.Println()
+	printGlobalHelp(os.Stdout)
 }
 
 func main() {
@@ -78,11 +64,21 @@ func main() {
 			}
 			a := os.Args[i]
 			if strings.HasPrefix(a, "--color=") {
-				os.Setenv("RUA_COLOR", strings.TrimPrefix(a, "--color="))
+				if err := setColorMode(strings.TrimPrefix(a, "--color=")); err != nil {
+					fmt.Fprintln(os.Stderr, "Error:", err)
+					os.Exit(2)
+				}
 				continue
 			}
-			if a == "--color" && i+1 < len(os.Args) {
-				os.Setenv("RUA_COLOR", os.Args[i+1])
+			if a == "--color" {
+				if i+1 >= len(os.Args) {
+					fmt.Fprintln(os.Stderr, "Error: --color requires a value: always, never, or auto")
+					os.Exit(2)
+				}
+				if err := setColorMode(os.Args[i+1]); err != nil {
+					fmt.Fprintln(os.Stderr, "Error:", err)
+					os.Exit(2)
+				}
 				skipNext = true
 				continue
 			}
@@ -102,8 +98,7 @@ func main() {
 		sandboxExec()
 		return
 	case "version", "--version", "-v":
-		fmt.Println(Version)
-		return
+		versionCmd(os.Args[2:])
 	case "builddir":
 		builddirCmd(os.Args[2:])
 	case "shellcheck":
@@ -129,6 +124,20 @@ func main() {
 	}
 }
 
+func setColorMode(value string) error {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	switch mode {
+	case "always", "never", "auto":
+	default:
+		return fmt.Errorf("invalid --color value %q: expected always, never, or auto", value)
+	}
+	if err := os.Setenv("RUA_COLOR", mode); err != nil {
+		return fmt.Errorf("set color mode: %w", err)
+	}
+	term.Recompute()
+	return nil
+}
+
 func helpCmd(args []string) {
 	if len(args) == 0 {
 		usage()
@@ -136,37 +145,49 @@ func helpCmd(args []string) {
 	}
 	switch args[0] {
 	case "builddir":
-		builddirUsage()
+		builddirCmd([]string{"--help"})
 	case "shellcheck":
-		shellcheckUsage()
+		shellcheckCmd([]string{"--help"})
 	case "namcap":
-		namcapUsage()
+		namcapCmd([]string{"--help"})
 	case "install":
-		installUsage()
+		installCmd([]string{"--help"})
 	case "search":
-		searchUsage()
+		searchCmd([]string{"--help"})
 	case "info":
-		infoUsage()
+		infoCmd([]string{"--help"})
 	case "tarcheck":
-		tarcheckUsage()
+		tarcheckCmd([]string{"--help"})
 	case "upgrade":
-		upgradeUsage()
+		upgradeCmd([]string{"--help"})
+	case "version":
+		versionCmd([]string{"--help"})
 	default:
 		fmt.Fprintf(os.Stderr, "unknown help topic: %s\n\n", args[0])
 		usage()
 	}
 }
 
+func versionCmd(args []string) {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	setCommandUsage(fs, versionHelp)
+	if !parseCommandFlags(fs, args) {
+		return
+	}
+	fmt.Println(Version)
+}
+
 func builddirCmd(args []string) {
 	fs := flag.NewFlagSet("builddir", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
-	fs.Usage = builddirUsage
-	offline := fs.Bool("offline", true, "Forbid internet access while building (default)")
-	online := fs.Bool("online", false, "Allow internet access while building")
+	offline := fs.Bool("offline", true, "Forbid internet access while building")
+	online := fs.Bool("online", false, "Allow internet access while building; overrides --offline")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
 	forceBwrap := fs.Bool("bwrap", false, "Force bubblewrap isolation even when not offline")
-	if err := fs.Parse(args); err != nil {
+	setCommandUsage(fs, builddirHelp)
+	if !parseCommandFlags(fs, args) {
 		return
 	}
 
@@ -199,15 +220,11 @@ func builddirCmd(args []string) {
 	}
 }
 
-func builddirUsage() {
-	fmt.Println("Usage: go-rua builddir [--online] [--offline] [--force] [--no-seccomp] [--bwrap] [dir]")
-}
-
 func shellcheckCmd(args []string) {
 	fs := flag.NewFlagSet("shellcheck", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
-	fs.Usage = shellcheckUsage
-	if err := fs.Parse(args); err != nil {
+	setCommandUsage(fs, shellcheckHelp)
+	if !parseCommandFlags(fs, args) {
 		return
 	}
 	var target string
@@ -234,13 +251,11 @@ func shellcheckCmd(args []string) {
 	}
 }
 
-func shellcheckUsage() { fmt.Println("Usage: go-rua shellcheck [file|dir]") }
-
 func namcapCmd(args []string) {
 	fs := flag.NewFlagSet("namcap", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
-	fs.Usage = namcapUsage
-	if err := fs.Parse(args); err != nil {
+	setCommandUsage(fs, namcapHelp)
+	if !parseCommandFlags(fs, args) {
 		return
 	}
 	var target string
@@ -255,21 +270,19 @@ func namcapCmd(args []string) {
 	}
 }
 
-func namcapUsage() { fmt.Println("Usage: go-rua namcap [file|dir]") }
-
 func installCmd(args []string) {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
-	fs.Usage = installUsage
-	offline := fs.Bool("offline", true, "Forbid internet access while building (default)")
-	online := fs.Bool("online", false, "Allow internet access while building")
+	offline := fs.Bool("offline", true, "Forbid internet access while building")
+	online := fs.Bool("online", false, "Allow internet access while building; overrides --offline")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	asdeps := fs.Bool("asdeps", false, "Install built packages as dependencies")
 	planOnly := fs.Bool("plan", false, "Print build plan and exit")
 	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
 	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
-	installBuilt := fs.Bool("install", false, "Install built artifacts after staging")
-	if err := fs.Parse(args); err != nil {
+	stageOnly := fs.Bool("stage-only", false, "Stage built artifacts without installing them")
+	setCommandUsage(fs, installHelp)
+	if !parseCommandFlags(fs, args) {
 		return
 	}
 	pkgs := fs.Args()
@@ -331,30 +344,17 @@ func installCmd(args []string) {
 	}
 	effOffline := *offline && !*online
 	if err := (func() error {
-		return installInstallFn(pkgs, p, install.Options{Offline: effOffline, Force: *force, InstallBuilt: *installBuilt, DisableSeccomp: *noSeccomp, AsDeps: *asdeps})
+		return installInstallFn(pkgs, p, install.Options{Offline: effOffline, Force: *force, InstallBuilt: !*stageOnly, DisableSeccomp: *noSeccomp, AsDeps: *asdeps})
 	})(); err != nil {
 		fatalf("install failed: %v", err)
 	}
 }
 
-func installUsage() {
-	fmt.Println("Usage: go-rua install [--online] [--offline] [--force] [--install] [--asdeps] [--plan] [--install-repo-deps] [--no-seccomp] <pkgs...>")
-	fmt.Println("Options:")
-	fmt.Println("  --offline             Forbid internet access while building (default)")
-	fmt.Println("  --online              Allow internet access while building")
-	fmt.Println("  --force               Pass --force to makepkg")
-	fmt.Println("  --install             Install built artifacts after staging")
-	fmt.Println("  --asdeps              Install built packages as dependencies")
-	fmt.Println("  --plan                Print build plan and exit")
-	fmt.Println("  --install-repo-deps   Install missing repo deps with pacman")
-	fmt.Println("  --no-seccomp          Disable seccomp denylist for build (debug)")
-}
-
 func searchCmd(args []string) {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
-	fs.Usage = searchUsage
-	if err := fs.Parse(args); err != nil {
+	setCommandUsage(fs, searchHelp)
+	if !parseCommandFlags(fs, args) {
 		return
 	}
 	if fs.NArg() == 0 {
@@ -370,14 +370,12 @@ func searchCmd(args []string) {
 	}
 }
 
-func searchUsage() { fmt.Println("Usage: go-rua search <keywords...>") }
-
 func infoCmd(args []string) {
 	fs := flag.NewFlagSet("info", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
-	fs.Usage = infoUsage
 	jsonOut := fs.Bool("json", false, "Output JSON")
-	if err := fs.Parse(args); err != nil {
+	setCommandUsage(fs, infoHelp)
+	if !parseCommandFlags(fs, args) {
 		return
 	}
 	if fs.NArg() == 0 {
@@ -436,13 +434,11 @@ func infoCmd(args []string) {
 	}
 }
 
-func infoUsage() { fmt.Println("Usage: go-rua info [--json] <pkg1> [pkg2 ...]") }
-
 func tarcheckCmd(args []string) {
 	fs := flag.NewFlagSet("tarcheck", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
-	fs.Usage = tarcheckUsage
-	if err := fs.Parse(args); err != nil {
+	setCommandUsage(fs, tarcheckHelp)
+	if !parseCommandFlags(fs, args) {
 		return
 	}
 	if fs.NArg() != 1 {
@@ -459,23 +455,20 @@ func tarcheckCmd(args []string) {
 	fmt.Fprintf(os.Stderr, "Finished checking package: %s\n", target)
 }
 
-func tarcheckUsage() { fmt.Println("Usage: go-rua tarcheck <archive>") }
-
 func upgradeCmd(args []string) {
 	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
-	fs.Usage = upgradeUsage
 	printOnly := fs.Bool("printonly", false, "Print outdated packages and exit")
-	apply := fs.Bool("apply", false, "Build and install upgrades after review")
 	plan := fs.Bool("plan", false, "Print upgrade plan and exit")
 	devel := fs.Bool("devel", false, "Also rebuild development VCS packages (-git, -hg, -bzr, -svn, -cvs, -darcs)")
 	ignore := fs.String("ignore", "", "Comma-separated list of packages to ignore")
-	offline := fs.Bool("offline", true, "Forbid internet access while building (default)")
-	online := fs.Bool("online", false, "Allow internet access while building")
+	offline := fs.Bool("offline", true, "Forbid internet access while building")
+	online := fs.Bool("online", false, "Allow internet access while building; overrides --offline")
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
 	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
-	if err := fs.Parse(args); err != nil {
+	setCommandUsage(fs, upgradeHelp)
+	if !parseCommandFlags(fs, args) {
 		return
 	}
 	outdated, nonexistent, err := findOutdated(*devel, *ignore)
@@ -494,8 +487,7 @@ func upgradeCmd(args []string) {
 		}
 		return
 	}
-	// Planning is the default; --apply is required for build/install.
-	if *plan || !*apply {
+	if *plan {
 		// Detailed outdated table
 		items, _, _ := listOutdatedDetailed(*devel, *ignore)
 		if len(items) > 0 {
@@ -523,12 +515,14 @@ func upgradeCmd(args []string) {
 		if len(pl.Unknown) > 0 {
 			fmt.Printf("  Unknown deps: %s\n", strings.Join(pl.Unknown, ", "))
 		}
-		if len(nonexistent) > 0 {
-			fmt.Printf("  Note: %d installed packages not found in AUR: %s\n", len(nonexistent), strings.Join(nonexistent, ", "))
-		}
+		printNonexistentPackages(nonexistent)
 		return
 	}
-	// apply/default: build and install in order
+	printNonexistentPackages(nonexistent)
+	if len(outdated) == 0 {
+		return
+	}
+	// Build and install in order by default.
 	pl, err := installPlanFn(outdated)
 	if err != nil {
 		fatalf("plan failed: %v", err)
@@ -549,8 +543,21 @@ func upgradeCmd(args []string) {
 	}
 }
 
-func upgradeUsage() {
-	fmt.Println("Usage: go-rua upgrade [--apply] [--plan] [--devel] [--ignore=<pkg1,pkg2>] [--online] [--offline] [--force] [--install-repo-deps] [--no-seccomp]")
+func printNonexistentPackages(names []string) {
+	if len(names) > 0 {
+		fmt.Printf("  Note: %d installed packages not found in AUR: %s\n", len(names), strings.Join(names, ", "))
+	}
+}
+
+func parseCommandFlags(fs *flag.FlagSet, args []string) bool {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return false
+		}
+		os.Exit(2)
+		return false
+	}
+	return true
 }
 
 func fatalf(format string, a ...any) {
