@@ -11,21 +11,21 @@ A lightweight reimplementation of RUA (AUR helper) in Go, sandboxed with Landloc
 - **shellcheck:** Run shellcheck for a PKGBUILD in a sandbox.
   - Uses a wrapper to set PKGBUILD-specific variables to reduce false positives.
 - **namcap:** Run namcap for a PKGBUILD in a sandbox.
-- **install:** Clone AUR repos, review, build, stage, optional install.
-  - Flags: `--online`, `--offline` (default), `--force`, `--install`, `--asdeps`, `--plan`, `--install-repo-deps`, `--no-seccomp`.
+- **install:** Clone AUR repos, review, build, stage, and install by default.
+  - Flags: `--online`, `--offline` (default), `--force`, `--stage-only`, `--asdeps`, `--plan`, `--install-repo-deps`, `--no-seccomp`.
   - Review warns about source URLs with Unicode/IDN hostname spoofing risks and suspicious shell logic; interactive installs require acknowledgement before continuing.
 - **tarcheck:** Inspect a built package archive interactively (SUID, execs, INSTALL, etc.).
 - **search:** Search AUR by name/description via RPC; ALL provided keywords must match (AND semantics).
 - **info:** Show AUR package info via RPC (human-readable; use `--json` for raw JSON).
-- **upgrade:** Plan upgrades for outdated AUR packages by default; `--apply` reviews, builds, and installs.
-  - Flags: `--apply`, `--plan`, `--printonly`, `--devel`, `--ignore=<pkg1,pkg2>`, `--online`, `--offline` (default), `--force`, `--install-repo-deps`, `--no-seccomp`.
+- **upgrade:** Review, build, and install outdated AUR packages by default; `--plan` only prints the upgrade plan.
+  - Flags: `--plan`, `--printonly`, `--devel`, `--ignore=<pkg1,pkg2>`, `--online`, `--offline` (default), `--force`, `--install-repo-deps`, `--no-seccomp`.
 
 ## Dependency Planning and Summaries
 
 - AUR info includes Depends/MakeDepends/CheckDepends fields.
 - Pre-install summary shows missing repo deps and unknown/virtual deps.
 - `install --plan` prints a build plan with topological order, repo deps to install, and unknowns.
-- `upgrade` prints the plan; `upgrade --apply` reviews, builds, and installs outdated packages using the computed build order.
+- `upgrade --plan` prints the plan; `upgrade` reviews, builds, and installs outdated packages using the computed build order.
 - `upgrade --devel` considers VCS packages (-git/-hg/-bzr/-svn/-cvs/-darcs) as candidates.
 - `upgrade --ignore` and pacman `IgnorePkg` omit packages from upgrade checks; nonexistent packages are reported.
 - Optional `--install-repo-deps` runs `pacman -S --needed` using the elevation tool (see below) for missing repo deps.
@@ -49,11 +49,14 @@ A lightweight reimplementation of RUA (AUR helper) in Go, sandboxed with Landloc
   - Allow network: `go-rua builddir --online /path/to/pkg`
 - Plan install for an AUR target:
   - `go-rua install --plan yay`
-- Install an AUR target, auto-install repo deps, and install built artifacts:
-  - `go-rua install --install --install-repo-deps yay`
-- Check for upgrades (plan vs apply):
-  - `go-rua upgrade` (prints plan)
-  - `go-rua upgrade --apply --install-repo-deps` (reviews, builds, and installs)
+- Install an AUR target and auto-install repo deps:
+  - `go-rua install --install-repo-deps yay`
+- Build, review, and stage an AUR target without installing it:
+  - `go-rua install --stage-only yay`
+- Check the upgrade plan without making changes:
+  - `go-rua upgrade --plan`
+- Review, build, and install upgrades, including missing repo dependencies:
+  - `go-rua upgrade --install-repo-deps`
 
 ## Notes
 
@@ -70,5 +73,6 @@ A lightweight reimplementation of RUA (AUR helper) in Go, sandboxed with Landloc
 - Format: `make fmt`
 - Test: `make test` (formats first)
 - Full local check: `make check` (format, vet, test, build)
-- Help: `go-rua help`, `go-rua help <command>` or `go-rua <command> -h`
+- Global help: `go-rua help` or `go-rua --help`
+- Detailed command help: `go-rua help <command>`, `go-rua <command> --help`, or `go-rua <command> -h`
 - Smoke test: `make smoke` (best-effort; skips AUR checks if offline)

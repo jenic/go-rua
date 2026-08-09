@@ -130,7 +130,7 @@ Reviewed artifacts are moved to `~/.local/share/rua/checked_tars/<pkgbase>`. Sta
 
 ### Privileged Installation
 
-When `--install` is used, go-rua invokes pacman through the configured elevation command to install staged artifacts with `pacman -U --needed`. Repository dependencies may be installed with `--install-repo-deps`, which runs `pacman -S --needed`.
+By default, `go-rua install` and `go-rua upgrade` invoke pacman through the configured elevation command to install staged artifacts with `pacman -U --needed`. Use `install --stage-only` to stop after staging without invoking pacman, or `upgrade --plan` to inspect available upgrades without building or installing them. Repository dependencies may be installed with `--install-repo-deps`, which runs `pacman -S --needed`.
 
 Privileged pacman operations are outside the sandbox. Installing a package is the final trust transition and can modify the system.
 
@@ -149,7 +149,7 @@ Privileged pacman operations are outside the sandbox. Installing a package is th
 - The main build sandbox does not mount the user's real GPG home.
 - Build artifacts filtered by expected split package names where possible.
 - Interactive archive inspection before staging.
-- Staging under `checked_tars` before optional pacman installation.
+- Staging under `checked_tars` before pacman installation.
 
 ## Known Limitations and Residual Risks
 
@@ -172,7 +172,7 @@ Privileged pacman operations are outside the sandbox. Installing a package is th
 
 ## Operational Guidance
 
-- Prefer `install --plan` before building or applying changes. `upgrade` plans by default; use `upgrade --apply` only after reviewing the plan.
+- Prefer `install --plan` and `upgrade --plan` before building or applying changes. Running `upgrade` without `--plan` reviews, builds, and installs upgrades by default.
 - Review AUR diffs before continuing, especially after updates.
 - Treat source URL warnings as high-risk review items; compare the displayed host to the IDNA/Punycode form and codepoint details.
 - Treat shell logic warnings as prompts for manual review of the exact `PKGBUILD` or install hook snippet.
@@ -182,7 +182,7 @@ Privileged pacman operations are outside the sandbox. Installing a package is th
 - Inspect `.INSTALL` scripts, executable files, SUID/SGID files, service files, timers, hooks, and unexpected filesystem paths.
 - Be cautious with packages that fetch code during build, use opaque binary blobs, or run large custom scripts.
 - Do not install staged artifacts if review results are unclear.
-- Remember that `--install-repo-deps` and `--install` perform privileged package manager operations.
+- Remember that `install` performs a privileged package manager operation by default; use `--stage-only` to avoid `pacman -U`. The `--install-repo-deps` option performs an additional privileged operation.
 
 ## Future Hardening Ideas
 
