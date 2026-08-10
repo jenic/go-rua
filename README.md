@@ -18,7 +18,8 @@ A lightweight reimplementation of RUA (AUR helper) in Go, sandboxed with Landloc
 - **search:** Search AUR by name/description via RPC; ALL provided keywords must match (AND semantics).
 - **info:** Show AUR package info via RPC (human-readable; use `--json` for raw JSON).
 - **upgrade:** Review, build, and install outdated AUR packages by default; `--plan` only prints the upgrade plan.
-  - Flags: `--plan`, `--printonly`, `--devel`, `--ignore=<pkg1,pkg2>`, `--online`, `--offline` (default), `--force`, `--install-repo-deps`, `--no-seccomp`.
+  - Flags include `--upstream` for explicit verified GitHub overrides and `--validate-all-arches` for complete architecture validation.
+- **upstream:** Inspect configured or discovered GitHub candidates as text or JSON and manage bounded verification evidence.
 
 ## Dependency Planning and Summaries
 
@@ -28,6 +29,8 @@ A lightweight reimplementation of RUA (AUR helper) in Go, sandboxed with Landloc
 - `upgrade --plan` prints the plan; `upgrade` reviews, builds, and installs outdated packages using the computed build order.
 - `upgrade --devel` considers VCS packages (-git/-hg/-bzr/-svn/-cvs/-darcs) as candidates.
 - `upgrade --ignore` and pacman `IgnorePkg` omit packages from upgrade checks; nonexistent packages are reported.
+- `upgrade --plan` performs best-effort GitHub reporting for supported static recipes. This includes canonical release assets and tag-pinned `git+https://github.com/OWNER/REPO[.git]#tag=...` sources. `upgrade --upstream` explicitly opts into an ephemeral verified recipe override; `--validate-all-arches` requires every declared architecture source and verification mapping.
+- Optional GitHub and GitHub Enterprise policy is read from `$XDG_CONFIG_HOME/rua/github_upstream.json`. See the [`internal/upstream` package documentation](internal/upstream/README.md) for schema version 1, implementation details, and trust boundaries.
 - Optional `--install-repo-deps` runs `pacman -S --needed` using the elevation tool (see below) for missing repo deps.
 
 ## Sandboxing
@@ -57,6 +60,10 @@ A lightweight reimplementation of RUA (AUR helper) in Go, sandboxed with Landloc
   - `go-rua upgrade --plan`
 - Review, build, and install upgrades, including missing repo dependencies:
   - `go-rua upgrade --install-repo-deps`
+- Inspect upstream candidates as JSON:
+  - `go-rua upstream --json`
+- Export retained verification evidence to a new directory:
+  - `go-rua upstream --export-evidence ./rua-evidence`
 
 ## Notes
 

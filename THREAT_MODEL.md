@@ -132,6 +132,107 @@ Reviewed artifacts are moved to `~/.local/share/rua/checked_tars/<pkgbase>`. Sta
 
 By default, `go-rua install` and `go-rua upgrade` invoke pacman through the configured elevation command to install staged artifacts with `pacman -U --needed`. Use `install --stage-only` to stop after staging without invoking pacman, or `upgrade --plan` to inspect available upgrades without building or installing them. Repository dependencies may be installed with `--install-repo-deps`, which runs `pacman -S --needed`.
 
+`upgrade --upstream` explicitly broadens the selected input from the AUR recipe
+revision to a newer GitHub release or tag. Bare `upgrade` remains AUR-only. The
+upstream path accepts only a narrow static recipe subset, verifies downloaded
+bytes against every available supported GitHub digest, exact checksum sidecar,
+and externally anchored signature, and rejects conflicting or incomplete evidence.
+Release-provided public keys are never imported. Signature checks use an
+isolated keyring populated only with fingerprints already named by
+`validpgpkeys` in the reviewed recipe or the private per-package policy.
+GitHub release metadata advances monotonically: newly uploaded assets are
+accepted only while the complete cached release proves every previously seen
+asset identity and digest is unchanged. Removed or modified assets remain a
+hard failure. If only a historical whole-release fingerprint remains after a
+release leaves the bounded API page, any changed fingerprint is rejected
+because an append-only update can no longer be proven.
+Newer-release discovery remains bounded to the recent releases page. When an
+asset recipe's current baseline has left that page, go-rua may fetch only that
+exact tag to prove the existing version and assets; it cannot select an
+otherwise hidden candidate. The exact-tag ETag cache is seeded on first use
+with retained recent-page fingerprints so changing API endpoints does not
+reset mutation history.
+
+An upstream override is written only to the ephemeral build copy. The
+persistent review checkout is hashed and checked for mutation, the modified
+copy is audited again, and the exact recipe diff and verification evidence
+require explicit approval. `upgrade --plan --upstream` performs metadata and
+recipe eligibility checks only; it does not download release artifacts, edit a
+recipe, build, stage, or invoke pacman. Residual risks include a compromised
+GitHub project or release workflow, compromised recipe-authorized signing keys,
+and malicious but correctly signed upstream binaries.
+
+Canonical `git+https` GitHub sources are eligible only when they use an exact
+version-derived `#tag=` fragment. Branch, commit, unqualified, encoded, and
+ambiguous fragment forms are rejected during discovery. go-rua compares the
+bounded tag-list commit with an exact Git ref resolution, retains tag-to-commit
+history to detect later tag movement, and rewrites only the ephemeral build
+copy to `#commit=<object-id>`. A `?signed` source requires an annotated tag
+signature that verifies under a full fingerprint anchored by the reviewed
+recipe or private policy. The override service does not clone Git content;
+makepkg's normal online prefetch obtains the pinned commit before the offline
+build. Lightweight or unsigned tags remain upstream-controlled identity and do
+not gain authenticity merely from GitHub hosting.
+
+Stage 3 policy is read from the effective-user-owned, private, bounded, no-follow
+`$XDG_CONFIG_HOME/rua/github_upstream.json` file. It can bind an AUR package
+base to an exact GitHub or GitHub Enterprise web host, API origin, release
+channel, tag and per-architecture asset templates, redirect hosts, and
+externally anchored OpenPGP fingerprints. Unknown fields, duplicate package
+mappings, ambiguous versioned sources, userinfo, noncanonical hosts, and
+implicit nondefault ports are rejected. A package entry whose identity cannot
+be structurally attributed invalidates the entire policy, preventing fallback
+to unconfigured discovery. Ordinary status and planning keep attributable
+package errors report-only so unrelated AUR planning can continue; explicit
+`upgrade --upstream` application treats policy errors as fatal.
+
+Policy contains an environment-variable name, never a literal API token. The
+token is attached only to the exact configured API origin. API redirects are
+refused. Artifact requests begin without API credentials, strip authorization,
+cookie, and proxy-authorization headers on every redirect, and accept only the
+exact configured release host or redirect allowlist. Cache and evidence keys
+include host/API identity so equal owner and repository names on two hosts
+cannot share trust state. Each endpoint cache is reconciled under an owned,
+private, empty, singly linked, persistent no-follow lock. The network request
+is made before locking; the writer then re-reads and revalidates current state
+and retains the lock through atomic publication, preventing concurrent clients
+from accepting conflicting identities against the same stale cache state.
+
+`upgrade --validate-all-arches` is valid only with `--upstream`. It expands the
+verification obligation to every changing generic and architecture-specific
+source, requires every selected artifact and evidence chain, then updates all
+corresponding SHA-256 arrays and exact `.SRCINFO` entries. Missing assets or
+conflicting evidence abort before recipe rewriting; the persistent review
+checkout remains unchanged. Host-only mode remains the default and rejects
+changing non-host metadata it cannot keep exact.
+
+`go-rua upstream --export-evidence` requires effective-user-owned private
+source directories and records with no symlink path components. It strictly
+decodes the complete typed schema, re-encodes only validated secret-free
+fields, binds each record filename and history to one package base, writes a
+private temporary export, and publishes with Linux atomic no-replace semantics
+to a new destination. A destination created concurrently is never replaced.
+Evidence history read, validation, append, and atomic publication are serialized
+per package across processes with a persistent empty lock file. The lock is
+opened without following symlinks, must be owned by the effective user, private,
+regular, singly linked, and remains locked through record publication; it is
+closed but not unlinked during release.
+`--gc-evidence` applies the same ownership, privacy, symlink, and record-identity
+checks, is limited by the CLI to go-rua's evidence directory, retains valid
+history, and removes only owned private abandoned regular writer temporary
+files older than 24 hours. Neither operation grants build or package
+installation authority.
+
+Immediately before applying an upstream override, go-rua re-reads the installed
+foreign-package version and refuses a stale plan. It then revalidates the exact
+GitHub release asset or Git tag/ref/commit identity. Applicable changing sources
+must have a one-to-one selected asset or Git-reference mapping. Build-copy
+`.SRCINFO` must exactly match the reviewed recipe's source/checksum keys,
+architectures, and authorized signing
+keys, and download destinations must not collide with recipe files, declared
+sources, or existing files. Release redirects are limited to canonical HTTPS
+GitHub asset hosts with bounded hops and credential headers removed.
+
 Privileged pacman operations are outside the sandbox. Installing a package is the final trust transition and can modify the system.
 
 ## Current Mitigations
