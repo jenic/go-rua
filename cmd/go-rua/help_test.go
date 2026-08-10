@@ -25,7 +25,8 @@ func TestCommandHelpIsCompleteAndConsistent(t *testing.T) {
 		{topic: "search", run: searchCmd, wantArguments: true, wantText: []string{"AND semantics"}},
 		{topic: "info", run: infoCmd, wantArguments: true, wantFlags: []string{"--json"}, wantText: []string{"formatted JSON"}},
 		{topic: "tarcheck", run: tarcheckCmd, wantArguments: true, wantText: []string{"Review controls:", "O / Q"}},
-		{topic: "upgrade", run: upgradeCmd, wantFlags: []string{"--devel", "--force", "--ignore <packages>", "--install-repo-deps", "--no-seccomp", "--offline", "--online", "--plan", "--printonly"}, wantText: []string{"Modes:", "Exit status:", "status 7", "privileged"}},
+		{topic: "upgrade", run: upgradeCmd, wantFlags: []string{"--devel", "--force", "--ignore <packages>", "--install-repo-deps", "--no-seccomp", "--no-upstream-check", "--offline", "--online", "--plan", "--printonly", "--upstream", "--validate-all-arches"}, wantText: []string{"Modes:", "Upstream overrides:", ".sha256.asc", "Exit status:", "status 7", "privileged", "ephemeral"}},
+		{topic: "upstream", run: upstreamCmd, wantArguments: true, wantFlags: []string{"--export-evidence <directory>", "--gc-evidence", "--json"}, wantText: []string{"Configuration:", "Evidence:", "github_upstream.json", "atomically"}},
 		{topic: "version", run: versionCmd},
 	}
 
@@ -78,7 +79,7 @@ func TestCommandHelpDoesNotStartCommandWork(t *testing.T) {
 	tarcheckFn = func(string) error { calls++; return nil }
 	buildDirectoryCLIFn = func(string, paths.Paths, bool, bool, bool) error { calls++; return nil }
 
-	commands := []func([]string){builddirCmd, shellcheckCmd, namcapCmd, installCmd, searchCmd, infoCmd, tarcheckCmd, upgradeCmd, versionCmd}
+	commands := []func([]string){builddirCmd, shellcheckCmd, namcapCmd, installCmd, searchCmd, infoCmd, tarcheckCmd, upgradeCmd, upstreamCmd, versionCmd}
 	for _, command := range commands {
 		captureOut(func() { command([]string{"--help"}) })
 	}
@@ -98,6 +99,7 @@ func TestGlobalHelpListsPublicInterface(t *testing.T) {
 		"Commands:",
 		"install",
 		"upgrade",
+		"upstream",
 		"version",
 		"Global options:",
 		"--color <when>",

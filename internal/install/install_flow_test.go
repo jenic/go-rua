@@ -57,6 +57,10 @@ func TestInstallNonInteractiveFlowStagesAndInstalls(t *testing.T) {
 		} else if got := fi.Mode().Perm(); got != 0o700 {
 			t.Fatalf("build directory permissions = %o, want 700", got)
 		}
+		contents, err := os.ReadFile(filepath.Join(dir, "PKGBUILD"))
+		if err != nil || !strings.Contains(string(contents), "# ephemeral override") {
+			t.Fatalf("build copy hook did not run before build: %q, %v", contents, err)
+		}
 		// create a fake artifact
 		f := filepath.Join(dir, "app-1-1-x86_64.pkg.tar.zst")
 		if err := os.WriteFile(f, []byte("pkg"), 0o644); err != nil {
@@ -82,11 +86,26 @@ func TestInstallNonInteractiveFlowStagesAndInstalls(t *testing.T) {
 	// Stub runC to no-op so git commands don’t execute
 	runCFn = func(dir, name string, args ...string) error { return nil }
 
-	opt := Options{NonInteractive: true, InstallBuilt: true}
+	hookCalled := false
+	opt := Options{NonInteractive: true, InstallBuilt: true, PrepareBuildCopy: func(pkgbase, hookReviewDir, buildDir string) error {
+		hookCalled = pkgbase == "app" && hookReviewDir == reviewDir && buildDir == p.BuildDir("app")
+		file := filepath.Join(buildDir, "PKGBUILD")
+		contents, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(file, append(contents, []byte("# ephemeral override\n")...), 0o600)
+	}}
 	if err := Install([]string{"app"}, p, opt); err != nil {
 		t.Fatalf("Install error: %v", err)
 	}
 	if len(installed.files) != 1 || !strings.HasSuffix(installed.files[0], ".pkg.tar.zst") || installed.asdeps {
 		t.Fatalf("unexpected installed: %+v", installed)
+	}
+	if !hookCalled {
+		t.Fatal("build copy preparation hook was not called with expected directories")
+	}
+	if reviewed, _ := os.ReadFile(filepath.Join(reviewDir, "PKGBUILD")); strings.Contains(string(reviewed), "ephemeral override") {
+		t.Fatal("build copy preparation mutated the persistent review checkout")
 	}
 }

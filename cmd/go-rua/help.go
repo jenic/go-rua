@@ -182,6 +182,7 @@ func printGlobalHelp(w io.Writer) {
 		{Label: "info", Description: "Show AUR package metadata"},
 		{Label: "tarcheck", Description: "Interactively inspect a built package archive"},
 		{Label: "upgrade", Description: "Review, build, and install available AUR upgrades"},
+		{Label: "upstream", Description: "Inspect GitHub upstream status and manage verification evidence"},
 		{Label: "version", Description: "Print the go-rua version"},
 	})
 	fmt.Fprintln(w)
@@ -202,6 +203,7 @@ func printGlobalHelp(w io.Writer) {
 		{Label: "XDG_CONFIG_HOME", Description: "Set the base directory for package review checkouts and configuration"},
 		{Label: "XDG_CACHE_HOME", Description: "Set the base directory for package build workspaces"},
 		{Label: "XDG_DATA_HOME", Description: "Set the base directory for reviewed package archives"},
+		{Label: "RUA_GITHUB_TOKEN", Description: "Optional GitHub API token used only for upstream metadata requests"},
 	})
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Run 'go-rua help <command>' for detailed command help.")
@@ -373,28 +375,60 @@ var upgradeHelp = commandHelpSpec{
 	Description: []string{
 		"Compare installed foreign packages with AUR versions, compute dependency order, review each outdated package, and install the resulting archives.",
 		"Applying upgrades is the default and performs privileged package-manager operations. Use --plan or --printonly to inspect available work without building or installing packages.",
+		"In --plan mode, best-effort GitHub release and Git-tag checks report when a supported static recipe appears to lag upstream. Bare upgrade remains AUR-only.",
+		"--upstream is an explicit trust decision: eligible GitHub artifacts or immutable Git commits are verified, an ephemeral recipe copy is rewritten, and the exact diff requires approval before build and installation. --validate-all-arches additionally requires complete evidence for every declared architecture.",
 	},
 	Sections: []helpSection{
 		{Title: "Modes", Entries: []helpEntry{
 			{Label: "Default", Description: "Review, build, stage, and install every selected upgrade"},
-			{Label: "--plan", Description: "Show version changes, build order, repository dependencies, and unknown dependencies"},
+			{Label: "--plan", Description: "Show AUR work plus read-only upstream source, confidence, asset/Git-ref, sidecar, and AUR-lag status"},
+			{Label: "--plan --upstream", Description: "Also prove override eligibility and show intended source/checksum indices; never download artifacts"},
+			{Label: "--upstream", Description: "Include eligible GitHub versions newer than the installed package, with verification and approval"},
+			{Label: "--upstream --validate-all-arches", Description: "Require and verify every declared architecture source before rewriting its exact metadata"},
 			{Label: "--printonly", Description: "Print package names only; takes precedence over --plan"},
 		}},
 		{Title: "Review", Paragraphs: []string{"Each package uses the same interactive review, audit acknowledgement, archive inspection, and persistent checkout workflow as go-rua install."}},
+		{Title: "Upstream overrides", Paragraphs: []string{"Eligible sources are canonical GitHub release assets or tag-pinned git+https:// GitHub repositories with literal, top-level PKGBUILD version/source/checksum mappings. Git branch, commit, unqualified, encoded, and ambiguous fragment forms are rejected. Drafts, unselected prereleases, dynamic shell assignments, ambiguous indices, missing architecture sources, and baseline races are also rejected. A strict per-package policy can select an explicitly configured GitHub or GitHub Enterprise API origin, channel, tag template, optional per-architecture asset templates, and externally anchored fingerprints.", "Release artifacts and exact <asset>.sha256, <asset>.asc, and <asset>.sha256.asc sidecars are bounded and verified. A Git tag-list commit must agree with the exact Git ref resolution; the build-copy source is rewritten to #commit=<object-id> while its SHA-256 entry remains SKIP. ?signed requires an annotated tag signature under validpgpkeys already anchored by the reviewed recipe or fingerprints configured outside the release. Release-provided keys are never trusted.", "The persistent review checkout is never rewritten. The build copy is audited again, and the exact diff plus release, checksum, or Git-reference evidence requires explicit approval. Git content is fetched later by makepkg's normal prefetch. A lone .sha256.asc without .sha256 is rejected."}},
 		{Title: "Environment", Entries: []helpEntry{
 			{Label: "RUA_SUDO_COMMAND", Description: "Set the elevation command used for pacman (default: sudo)"},
 			{Label: "RUA_NO_BWRAP", Description: "Disable bubblewrap; offline builds also require RUA_ALLOW_WEAK_OFFLINE=1"},
 			{Label: "RUA_ALLOW_WEAK_OFFLINE", Description: "Accept Landlock-only fallback without guaranteed network isolation"},
+			{Label: "RUA_GITHUB_TOKEN", Description: "Optional API token for GitHub metadata; never sent to source or release asset hosts"},
+			{Label: "XDG_CACHE_HOME", Description: "Base directory for ETag-backed GitHub release and tag metadata cache"},
+			{Label: "XDG_CONFIG_HOME", Description: "Contains rua/github_upstream.json; the file must be private, regular, bounded, and version 1"},
 		}},
-		{Title: "Exit status", Paragraphs: []string{"Returns status 7 when no outdated or missing AUR packages are found."}},
+		{Title: "Exit status", Paragraphs: []string{"Returns status 7 when no AUR update, missing AUR package, or requested eligible upstream override is found."}},
 	},
 	Examples: []helpExample{
-		{Description: "Inspect the upgrade plan without making changes:", Command: "go-rua upgrade --plan"},
+		{Description: "Inspect the upgrade plan without building or installing packages:", Command: "go-rua upgrade --plan"},
+		{Description: "Inspect GitHub override eligibility without downloading artifacts:", Command: "go-rua upgrade --plan --upstream"},
+		{Description: "Apply eligible, verified GitHub overrides:", Command: "go-rua upgrade --upstream"},
 		{Description: "Review, build, and install available upgrades:", Command: "go-rua upgrade"},
 		{Description: "Also install missing repository dependencies:", Command: "go-rua upgrade --install-repo-deps"},
 		{Description: "Include development VCS packages but ignore selected packages:", Command: "go-rua upgrade --devel --ignore=foo,bar"},
 	},
 	FlagValues: map[string]string{"ignore": "packages"},
+}
+
+var upstreamHelp = commandHelpSpec{
+	Summary: "Inspect upstream status and manage verification evidence.",
+	Usage:   "go-rua upstream [options] [packages...]",
+	Description: []string{
+		"Check configured and conservatively discovered GitHub release or Git-tag candidates for installed foreign packages without changing recipes or downloading source content.",
+		"Evidence export and garbage collection are bounded local operations. They never include API tokens; export requires a new destination and is published atomically.",
+	},
+	Arguments: []helpEntry{{Label: "packages", Description: "Optional installed package names or package bases to inspect"}},
+	Sections: []helpSection{
+		{Title: "Configuration", Paragraphs: []string{"$XDG_CONFIG_HOME/rua/github_upstream.json uses schema version 1. The file and rua directory must be owned by the effective user, private, regular directories/files, and contain no symlink path component. It defines exact host/API origins and per-package repository, channel, tag, asset, and fingerprint policy. Structurally unattributable entries invalidate the policy globally. API credentials are environment-variable names only and are sent solely to the exact configured API origin. Invalid attributable package policy is reported independently; explicit upgrade application treats policy errors as fatal."}},
+		{Title: "Evidence", Paragraphs: []string{"Evidence history updates are serialized across processes with an owned private no-follow package lock held through atomic publication. --export-evidence strictly decodes and re-encodes validated typed history records into a new private directory with a manifest and atomic no-replace publication. Each record filename is bound to one package base. Source records and directories must be owned by the effective user, private, and free of symlink path components. --gc-evidence enforces the same source and record-identity checks, removes only owned private abandoned .evidence-* regular temporary files, and retains all valid bounded history records."}},
+	},
+	Examples: []helpExample{
+		{Description: "Inspect all installed foreign packages:", Command: "go-rua upstream"},
+		{Description: "Emit status for one package as JSON:", Command: "go-rua upstream --json brave-bin"},
+		{Description: "Export verification history:", Command: "go-rua upstream --export-evidence ./rua-evidence"},
+		{Description: "Remove abandoned temporary evidence files:", Command: "go-rua upstream --gc-evidence"},
+	},
+	FlagValues: map[string]string{"export-evidence": "directory"},
 }
 
 var versionHelp = commandHelpSpec{

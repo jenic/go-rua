@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"go-rua/internal/aur"
 	"go-rua/internal/build"
@@ -19,6 +23,7 @@ import (
 	"go-rua/internal/sourceaudit"
 	"go-rua/internal/tarcheck"
 	"go-rua/internal/term"
+	"go-rua/internal/upstream"
 )
 
 var Version string
@@ -46,6 +51,25 @@ var (
 	formatSourceAuditFn     = sourceaudit.FormatReport
 	shellAuditDirFn         = shellaudit.AuditDir
 	formatShellAuditFn      = shellaudit.FormatReport
+	upstreamCheckFn         = func(ctx context.Context, requests []upstream.Request) []upstream.Report {
+		return upstream.DefaultChecker(vercmpFn).Check(ctx, requests)
+	}
+	upstreamPlanFn = func(ctx context.Context, request upstream.Request, candidate upstream.Candidate) (upstream.Plan, error) {
+		recipe, err := upstream.FetchAURFile(ctx, nil, "", request.PackageBase, "PKGBUILD")
+		if err != nil {
+			return upstream.Plan{}, err
+		}
+		return upstream.PlanOverride(recipe, upstream.ApplyRequest{PackageBase: request.PackageBase, AURVersion: request.AURVersion, Candidate: candidate}, upstream.HostArchitecture())
+	}
+	upstreamPlanAllFn = func(ctx context.Context, request upstream.Request, candidate upstream.Candidate) (upstream.Plan, error) {
+		recipe, err := upstream.FetchAURFile(ctx, nil, "", request.PackageBase, "PKGBUILD")
+		if err != nil {
+			return upstream.Plan{}, err
+		}
+		return upstream.PlanOverrideForArchitectures(recipe, upstream.ApplyRequest{PackageBase: request.PackageBase, AURVersion: request.AURVersion, Candidate: candidate}, upstream.HostArchitecture(), true)
+	}
+	upstreamApplyFn       = upstream.ApplyBuildCopy
+	upstreamPolicyFatalFn = func(err error) { fatalf("%v", err) }
 )
 
 func usage() {
@@ -115,6 +139,8 @@ func main() {
 		tarcheckCmd(os.Args[2:])
 	case "upgrade":
 		upgradeCmd(os.Args[2:])
+	case "upstream":
+		upstreamCmd(os.Args[2:])
 	case "help", "-h", "--help":
 		helpCmd(os.Args[2:])
 	default:
@@ -160,6 +186,8 @@ func helpCmd(args []string) {
 		tarcheckCmd([]string{"--help"})
 	case "upgrade":
 		upgradeCmd([]string{"--help"})
+	case "upstream":
+		upstreamCmd([]string{"--help"})
 	case "version":
 		versionCmd([]string{"--help"})
 	default:
@@ -467,24 +495,86 @@ func upgradeCmd(args []string) {
 	force := fs.Bool("force", false, "Pass --force to makepkg")
 	installRepoDeps := fs.Bool("install-repo-deps", false, "Install missing repo deps with pacman")
 	noSeccomp := fs.Bool("no-seccomp", false, "Disable seccomp denylist for build")
+	noUpstreamCheck := fs.Bool("no-upstream-check", false, "Disable best-effort upstream release and tag checks in --plan")
+	useUpstream := fs.Bool("upstream", false, "Opt in to eligible verified GitHub upstream overrides")
+	validateAllArches := fs.Bool("validate-all-arches", false, "Verify and rewrite every declared architecture (requires --upstream)")
 	setCommandUsage(fs, upgradeHelp)
 	if !parseCommandFlags(fs, args) {
 		return
+	}
+	if *useUpstream && *noUpstreamCheck {
+		fatalf("--upstream cannot be combined with --no-upstream-check")
+	}
+	if *validateAllArches && !*useUpstream {
+		fatalf("--validate-all-arches requires --upstream")
 	}
 	outdated, nonexistent, err := findOutdated(*devel, *ignore)
 	if err != nil {
 		fatalf("upgrade check failed: %v", err)
 	}
-	if len(outdated) == 0 && len(nonexistent) == 0 {
-		os.Exit(7)
-	}
 	if *printOnly {
+		if len(outdated) == 0 && len(nonexistent) == 0 {
+			os.Exit(7)
+		}
 		for _, n := range outdated {
 			fmt.Println(n)
 		}
 		for _, n := range nonexistent {
 			fmt.Println(n)
 		}
+		return
+	}
+	var reports []upstream.Report
+	requestsByName := map[string]upstream.Request{}
+	eligible := map[string]upstream.ApplyRequest{}
+	eligibilityPlans := map[string]upstream.Plan{}
+	ineligibleReasons := map[string]string{}
+	if (*plan && !*noUpstreamCheck) || *useUpstream {
+		requests, requestErr := collectUpstreamRequests(*ignore)
+		if requestErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: upstream discovery unavailable: %v\n", requestErr)
+		} else if len(requests) > 0 {
+			for _, request := range requests {
+				requestsByName[request.Name] = request
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			reports = upstreamCheckFn(ctx, requests)
+			if *useUpstream {
+				if err := upstreamPolicyApplicationError(reports); err != nil {
+					cancel()
+					upstreamPolicyFatalFn(err)
+					return
+				}
+			}
+			for _, report := range reports {
+				if !*useUpstream || report.Candidate == nil || !report.Candidate.NewerThanLocal || !report.Candidate.NewerThanAUR {
+					continue
+				}
+				request, ok := requestsByName[report.Package]
+				if !ok {
+					continue
+				}
+				planFunction := upstreamPlanFn
+				if *validateAllArches {
+					planFunction = upstreamPlanAllFn
+				}
+				overridePlan, planErr := planFunction(ctx, request, *report.Candidate)
+				if planErr != nil {
+					ineligibleReasons[report.Package] = planErr.Error()
+					fmt.Fprintf(os.Stderr, "Warning: %s upstream candidate is ineligible: %v\n", report.Package, planErr)
+					continue
+				}
+				eligible[report.Package] = upstream.ApplyRequest{Name: request.Name, LocalVersion: request.LocalVersion, PackageBase: request.PackageBase, AURVersion: request.AURVersion, Candidate: *report.Candidate}
+				eligibilityPlans[report.Package] = overridePlan
+			}
+			cancel()
+		}
+	}
+	if len(outdated) == 0 && len(nonexistent) == 0 && len(eligible) == 0 {
+		if *plan && !*noUpstreamCheck {
+			printUpstreamReports(reports)
+		}
+		osExitFn(7)
 		return
 	}
 	if *plan {
@@ -496,7 +586,41 @@ func upgradeCmd(args []string) {
 				fmt.Printf("  %s  %s -> %s\n", it.Name, it.Local, it.Latest)
 			}
 		}
-		pl, err := installPlanFn(outdated)
+		if !*noUpstreamCheck {
+			printUpstreamReports(reports)
+		}
+		if *useUpstream && len(eligibilityPlans) > 0 {
+			fmt.Println(term.Bold("Eligible upstream overrides:"))
+			var names []string
+			for name := range eligibilityPlans {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				overridePlan := eligibilityPlans[name]
+				fmt.Printf("  %s: pkgver %s -> %s; pkgrel -> 1\n", name, overridePlan.FromVersion, overridePlan.ToVersion)
+				for _, mapping := range overridePlan.Mappings {
+					if mapping.Kind == "git" {
+						fmt.Printf("    %s[%d] -> immutable Git commit %s; %s[%d] remains SKIP\n", mapping.SourceKey, mapping.Index, mapping.GitReference.CommitSHA, mapping.ChecksumKey, mapping.Index)
+					} else {
+						fmt.Printf("    %s[%d] -> %s; %s[%d] -> downloaded SHA-256\n", mapping.SourceKey, mapping.Index, mapping.Asset.Name, mapping.ChecksumKey, mapping.Index)
+					}
+				}
+			}
+		}
+		if *useUpstream && len(ineligibleReasons) > 0 {
+			fmt.Println(term.Bold("Ineligible upstream candidates:"))
+			var names []string
+			for name := range ineligibleReasons {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				fmt.Printf("  %s: %s\n", name, ineligibleReasons[name])
+			}
+		}
+		targets := mergeUpgradeTargets(outdated, eligible)
+		pl, err := installPlanFn(targets)
 		if err != nil {
 			fatalf("plan failed: %v", err)
 		}
@@ -519,11 +643,15 @@ func upgradeCmd(args []string) {
 		return
 	}
 	printNonexistentPackages(nonexistent)
-	if len(outdated) == 0 {
+	targets := mergeUpgradeTargets(outdated, eligible)
+	if len(targets) == 0 {
 		return
 	}
+	if *useUpstream {
+		fmt.Fprintln(os.Stderr, "Warning: --upstream is an explicit trust decision that builds a GitHub release or immutable Git tag target newer than the reviewed AUR recipe. Review the generated diff and verification evidence before approving it.")
+	}
 	// Build and install in order by default.
-	pl, err := installPlanFn(outdated)
+	pl, err := installPlanFn(targets)
 	if err != nil {
 		fatalf("plan failed: %v", err)
 	}
@@ -537,10 +665,360 @@ func upgradeCmd(args []string) {
 	for _, name := range pl.BuildOrder {
 		fmt.Printf("\n==> Upgrading AUR pkg: %s\n", name)
 		effOffline := *offline && !*online
-		if err := installInstallFn([]string{name}, p, install.Options{Offline: effOffline, Force: *force, NonInteractive: false, InstallBuilt: true, DisableSeccomp: *noSeccomp}); err != nil {
+		installOptions := install.Options{Offline: effOffline, Force: *force, NonInteractive: false, InstallBuilt: true, DisableSeccomp: *noSeccomp}
+		if request, ok := eligible[name]; ok {
+			installOptions.PrepareBuildCopy = upstreamPrepareHookForArchitectures(request, p, *validateAllArches)
+		}
+		if err := installInstallFn([]string{name}, p, installOptions); err != nil {
 			fatalf("upgrade failed for %s: %v", name, err)
 		}
 	}
+}
+
+func upstreamPolicyApplicationError(reports []upstream.Report) error {
+	for _, report := range reports {
+		if report.PolicyReason != "" {
+			return fmt.Errorf("%s upstream policy is invalid: %s", report.Package, report.PolicyReason)
+		}
+	}
+	return nil
+}
+
+func mergeUpgradeTargets(outdated []string, eligible map[string]upstream.ApplyRequest) []string {
+	seen := map[string]bool{}
+	result := append([]string(nil), outdated...)
+	for _, name := range result {
+		seen[name] = true
+	}
+	var additions []string
+	for name := range eligible {
+		if !seen[name] {
+			additions = append(additions, name)
+		}
+	}
+	sort.Strings(additions)
+	return append(result, additions...)
+}
+
+func upstreamPrepareHook(request upstream.ApplyRequest, p paths.Paths) func(string, string, string) error {
+	return upstreamPrepareHookForArchitectures(request, p, false)
+}
+
+func upstreamPrepareHookForArchitectures(request upstream.ApplyRequest, p paths.Paths, validateAllArches bool) func(string, string, string) error {
+	return func(pkgbase, reviewDir, buildDir string) error {
+		if pkgbase != request.PackageBase {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+		defer cancel()
+		installedVersion, err := currentForeignVersion(request.Name)
+		if err != nil {
+			return fmt.Errorf("re-read installed package version: %w", err)
+		}
+		if installedVersion != request.LocalVersion {
+			return fmt.Errorf("installed %s version changed after planning: got %s want %s", request.Name, installedVersion, request.LocalVersion)
+		}
+		compare, err := vercmpFn(installedVersion, request.Candidate.FullVersion)
+		if err != nil {
+			return fmt.Errorf("compare fresh installed version to upstream candidate: %w", err)
+		}
+		if compare >= 0 {
+			return fmt.Errorf("upstream candidate %s is no longer newer than installed %s", request.Candidate.FullVersion, installedVersion)
+		}
+		_, err = upstreamApplyFn(ctx, reviewDir, buildDir, request, upstream.ApplyOptions{
+			Verifier:          upstream.GPGVerifier{},
+			EvidenceDir:       filepath.Join(filepath.Dir(p.DataCheckedTars), "upstream_evidence"),
+			ValidateAllArches: validateAllArches,
+			Revalidate: func(ctx context.Context, planned upstream.ApplyRequest) (upstream.Candidate, error) {
+				reports := upstreamCheckFn(ctx, []upstream.Request{{Name: planned.Name, PackageBase: planned.PackageBase, LocalVersion: planned.LocalVersion, AURVersion: planned.AURVersion}})
+				if len(reports) != 1 || reports[0].Candidate == nil || reports[0].UnknownReason != "" {
+					return upstream.Candidate{}, fmt.Errorf("candidate is no longer available")
+				}
+				return *reports[0].Candidate, nil
+			},
+			Audit: func(dir string) error {
+				sourceReport, err := sourceAuditDirFn(dir)
+				if err != nil {
+					return err
+				}
+				if sourceReport.HasWarnings() {
+					return fmt.Errorf("source audit warnings remain:\n%s", formatSourceAuditFn(sourceReport))
+				}
+				shellReport, err := shellAuditDirFn(dir)
+				if err != nil {
+					return err
+				}
+				if shellReport.HasWarnings() {
+					return fmt.Errorf("shell audit warnings remain:\n%s", formatShellAuditFn(shellReport))
+				}
+				return nil
+			},
+			Confirm: func(diff string, evidence upstream.Evidence) (bool, error) {
+				fmt.Println(term.Bold("Upstream override diff:"))
+				fmt.Println(diff)
+				if evidence.ReleaseID > 0 {
+					fmt.Printf("Verified GitHub %s tag %s, release %d.\n", evidence.Repository, evidence.Tag, evidence.ReleaseID)
+				} else {
+					fmt.Printf("Verified GitHub %s tag %s.\n", evidence.Repository, evidence.Tag)
+				}
+				fmt.Printf("  Host %s; recipe %s -> %s\n", evidence.HostArchitecture, evidence.BaselineRecipeSHA256, evidence.GeneratedRecipeSHA256)
+				for _, artifact := range evidence.Artifacts {
+					fmt.Printf("  Artifact %s (id %d, size %d): SHA-256 %s via %s", artifact.Name, artifact.ID, artifact.Size, artifact.SHA256, strings.Join(artifact.Methods, ", "))
+					if len(artifact.Signers) > 0 {
+						fmt.Printf("; signer(s) %s", strings.Join(artifact.Signers, ", "))
+					}
+					fmt.Println()
+					for _, sidecar := range artifact.Sidecars {
+						fmt.Printf("    Sidecar %s (id %d, size %d): SHA-256 %s\n", sidecar.Kind, sidecar.ID, sidecar.Size, sidecar.LocalSHA256)
+					}
+				}
+				for _, reference := range evidence.GitReferences {
+					fmt.Printf("  Git %s[%d] (%s): tag object %s -> commit %s", reference.SourceKey, reference.SourceIndex, reference.Architecture, reference.RefSHA, reference.CommitSHA)
+					if reference.SignatureVerified {
+						fmt.Printf("; anchored signer %s", reference.Signer)
+					} else {
+						fmt.Print("; unsigned GitHub ref identity")
+					}
+					fmt.Println()
+				}
+				fmt.Print("Apply this override to the ephemeral build copy? [y/N]: ")
+				answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+				return strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes"), err
+			},
+		})
+		return err
+	}
+}
+
+func upstreamCmd(args []string) {
+	fs := flag.NewFlagSet("upstream", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	jsonOutput := fs.Bool("json", false, "Emit machine-readable JSON")
+	exportDir := fs.String("export-evidence", "", "Atomically export validated evidence to a new directory")
+	gcEvidence := fs.Bool("gc-evidence", false, "Remove abandoned temporary evidence files")
+	setCommandUsage(fs, upstreamHelp)
+	if !parseCommandFlags(fs, args) {
+		return
+	}
+	if *exportDir != "" && *gcEvidence {
+		fatalf("--export-evidence and --gc-evidence are mutually exclusive")
+	}
+	p := pathsInitNoMakepkgFn()
+	evidenceDir := filepath.Join(filepath.Dir(p.DataCheckedTars), "upstream_evidence")
+	if *exportDir != "" {
+		if fs.NArg() != 0 {
+			fatalf("--export-evidence does not accept package arguments")
+		}
+		result, err := upstream.ExportEvidence(evidenceDir, *exportDir)
+		if err != nil {
+			fatalf("export upstream evidence: %v", err)
+		}
+		printEvidenceOperation(result, *jsonOutput, "exported")
+		return
+	}
+	if *gcEvidence {
+		if fs.NArg() != 0 {
+			fatalf("--gc-evidence does not accept package arguments")
+		}
+		result, err := upstream.GCEvidence(evidenceDir)
+		if err != nil {
+			fatalf("garbage collect upstream evidence: %v", err)
+		}
+		printEvidenceOperation(result, *jsonOutput, "retained")
+		return
+	}
+	requests, err := collectUpstreamRequests("")
+	if err != nil {
+		fatalf("collect upstream status: %v", err)
+	}
+	if fs.NArg() > 0 {
+		wanted := map[string]bool{}
+		for _, name := range fs.Args() {
+			wanted[name] = true
+		}
+		filtered := requests[:0]
+		for _, request := range requests {
+			if wanted[request.Name] || wanted[request.PackageBase] {
+				filtered = append(filtered, request)
+			}
+		}
+		requests = filtered
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	reports := upstreamCheckFn(ctx, requests)
+	if *jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(reports); err != nil {
+			fatalf("encode upstream status: %v", err)
+		}
+		return
+	}
+	printUpstreamReports(reports)
+}
+
+func printEvidenceOperation(result upstream.EvidenceOperation, jsonOutput bool, verb string) {
+	if jsonOutput {
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			fatalf("encode evidence result: %v", err)
+		}
+		return
+	}
+	fmt.Printf("Evidence %s: %d records, %d bytes", verb, result.Files, result.Bytes)
+	if result.Removed > 0 {
+		fmt.Printf("; removed %d abandoned temporary files", result.Removed)
+	}
+	fmt.Println()
+}
+
+func currentForeignVersion(name string) (string, error) {
+	packages, err := getForeignPkgsFn()
+	if err != nil {
+		return "", err
+	}
+	version := ""
+	for _, pkg := range packages {
+		if pkg.Name != name {
+			continue
+		}
+		if version != "" {
+			return "", fmt.Errorf("pacman reported duplicate installed package %s", name)
+		}
+		version = pkg.Version
+	}
+	if version == "" {
+		return "", fmt.Errorf("package %s is no longer installed as a foreign package", name)
+	}
+	return version, nil
+}
+
+func collectUpstreamRequests(ignoreCSV string) ([]upstream.Request, error) {
+	foreign, err := getForeignPkgsFn()
+	if err != nil {
+		return nil, err
+	}
+	if len(foreign) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0, len(foreign))
+	for _, pkg := range foreign {
+		names = append(names, pkg.Name)
+	}
+	infos, err := aurInfoFn(names)
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]aur.Package, len(infos))
+	for _, info := range infos {
+		byName[info.Name] = info
+	}
+	ignored := parseIgnoredCSV(ignoreCSV)
+	if systemIgnored, err := getIgnoredPkgsFn(); err == nil {
+		for _, name := range systemIgnored {
+			ignored[name] = struct{}{}
+		}
+	}
+	requests := make([]upstream.Request, 0, len(infos))
+	for _, pkg := range foreign {
+		if _, skip := ignored[pkg.Name]; skip {
+			continue
+		}
+		info, ok := byName[pkg.Name]
+		if !ok || info.PackageBase == "" {
+			continue
+		}
+		requests = append(requests, upstream.Request{
+			Name: pkg.Name, PackageBase: info.PackageBase, LocalVersion: pkg.Version, AURVersion: info.Version,
+		})
+	}
+	return requests, nil
+}
+
+func parseIgnoredCSV(value string) map[string]struct{} {
+	ignored := map[string]struct{}{}
+	for _, name := range strings.Split(value, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			ignored[name] = struct{}{}
+		}
+	}
+	return ignored
+}
+
+func printUpstreamReports(reports []upstream.Report) {
+	printedHeader := false
+	for _, report := range reports {
+		if report.Candidate == nil && report.UnknownReason == "" {
+			continue
+		}
+		if !printedHeader {
+			fmt.Println(term.Bold("Upstream status:"))
+			printedHeader = true
+		}
+		fmt.Printf("  %s:\n", report.Package)
+		if report.UnknownReason != "" {
+			fmt.Printf("    Status: unknown (%s)\n", report.UnknownReason)
+			continue
+		}
+		candidate := report.Candidate
+		fmt.Printf("    Source: %s\n", report.Source)
+		if candidate.Configured {
+			fmt.Printf("    Policy: %s (host %s, API origin %s)\n", candidate.PolicyReason, candidate.Host, candidate.APIOrigin)
+		}
+		fmt.Printf("    Installed: %s\n", report.LocalVersion)
+		fmt.Printf("    AUR: %s\n", report.AURVersion)
+		fmt.Printf("    GitHub: %s (tag %s, confidence %s)\n", candidate.FullVersion, candidate.Tag, candidate.Confidence)
+		switch {
+		case candidate.NewerThanLocal:
+			fmt.Println("    Local status: upstream is newer than installed")
+		case report.LocalCompare == 0:
+			fmt.Println("    Local status: installed matches upstream")
+		default:
+			fmt.Println("    Local status: installed is newer than detected upstream")
+		}
+		if candidate.NewerThanAUR {
+			fmt.Printf("    AUR lag: yes (%s -> %s)\n", report.AURVersion, candidate.FullVersion)
+		} else {
+			fmt.Println("    AUR lag: no")
+		}
+		for _, reason := range candidate.Reasons {
+			fmt.Printf("    Reason: %s\n", reason)
+		}
+		for _, asset := range candidate.Assets {
+			sidecars := detectedSidecars(asset.Sidecars)
+			fmt.Printf("    Asset [%s]: %s (detected sidecars: %s)\n", asset.Architecture, asset.Name, strings.Join(sidecars, ", "))
+		}
+		for _, reference := range candidate.GitReferences {
+			signature := "not requested"
+			if reference.SignatureRequired {
+				signature = "required by PKGBUILD"
+			} else if reference.SignaturePresent {
+				signature = "published; verified during apply when anchored"
+			}
+			fmt.Printf("    Git [%s] %s[%d]: tag object %s -> commit %s (signature %s)\n", reference.Architecture, reference.SourceKey, reference.SourceIndex, reference.RefSHA, reference.CommitSHA, signature)
+		}
+	}
+}
+
+func detectedSidecars(sidecars upstream.Sidecars) []string {
+	var result []string
+	if sidecars.SHA256 {
+		result = append(result, ".sha256")
+	}
+	if sidecars.Signature {
+		result = append(result, ".asc")
+	}
+	if sidecars.SHA256Signed {
+		label := ".sha256.asc"
+		if !sidecars.SHA256 {
+			label += " (incomplete chain: .sha256 missing)"
+		}
+		result = append(result, label)
+	}
+	if len(result) == 0 {
+		return []string{"none detected"}
+	}
+	return result
 }
 
 func printNonexistentPackages(names []string) {

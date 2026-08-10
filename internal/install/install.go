@@ -32,6 +32,9 @@ type Options struct {
 	DisableSeccomp bool
 	// AsDeps installs built packages as dependencies
 	AsDeps bool
+	// PrepareBuildCopy may validate and modify only the ephemeral build copy
+	// after normal recipe review and before sandboxed build execution.
+	PrepareBuildCopy func(pkgbase, reviewDir, buildDir string) error
 }
 
 // test seams for external interactions
@@ -269,6 +272,11 @@ func Install(pkgs []string, p paths.Paths, opt Options) error {
 				return err
 			}
 			_ = os.RemoveAll(filepath.Join(buildDirPath, ".git"))
+			if opt.PrepareBuildCopy != nil {
+				if err := opt.PrepareBuildCopy(pkgbase, reviewDir, buildDirPath); err != nil {
+					return fmt.Errorf("prepare build copy for %s: %w", pkgbase, err)
+				}
+			}
 			if err := buildDirectoryFn(buildDirPath, p, opt.Offline, opt.Force, !opt.DisableSeccomp); err != nil {
 				return err
 			}
