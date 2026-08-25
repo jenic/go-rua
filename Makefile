@@ -3,10 +3,11 @@
 TS := $(shell date +%Y%M%d)
 COMMIT=$(shell git describe --long --tags --dirty --always | sed 's/^v//;s/\([^-]*-\)g/r\1/;s/-/./g;s/dirty/dirty_$(TS)/g')
 GO ?= go
-GOTOOLCHAIN ?= go1.26.4
+GOTOOLCHAIN ?= auto
 GOPATH ?= $(CURDIR)/.gopath
 GOCACHE ?= $(CURDIR)/.gocache
 GOMODCACHE ?= $(CURDIR)/.gomodcache
+PUBLISH ?= 0
 BINARY := go-rua
 BIN_DIR := bin
 CMD_DIR := ./cmd/go-rua
@@ -17,7 +18,7 @@ GOFLAGS=-ldflags="${LDFLAGS}" -buildmode=pie
 GOENV := GOPATH=$(GOPATH) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOTOOLCHAIN=$(GOTOOLCHAIN)
 CACHE_DIRS := $(GOPATH) $(GOCACHE) $(GOMODCACHE)
 
-.PHONY: help build build-actual sast run fmt vet verify test check smoke install clean
+.PHONY: help build build-actual sast run fmt vet verify test check smoke install publish-check publish clean
 
 help: ## Show available make targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .+$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -58,6 +59,12 @@ check: fmt vet verify test build ## Format, vet, verify, test, build, and scan
 
 install: fmt vet verify test build ## Check, build, scan, and install to /usr/local/bin
 	sudo install -v -C -o root -g root -m 0755 $(OUT) /usr/local/bin/$(notdir $(OUT))
+
+publish-check: ## Validate a release (usage: make publish-check VERSION=v0.1.0)
+	@VERSION='$(VERSION)' ./publish.sh check
+
+publish: publish-check test ## Test, sign, tag, and publish a release
+	@VERSION='$(VERSION)' PUBLISH='$(PUBLISH)' ./publish.sh publish
 
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR)
