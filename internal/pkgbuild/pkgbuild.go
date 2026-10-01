@@ -32,6 +32,9 @@ type Metadata struct {
 	Sources       map[string][]string
 	Checksums     map[string][]string
 	ValidPGPKeys  []string
+	PackageNames  []string
+	Packaging     map[string][]string
+	Incomplete    []string
 }
 
 type Override struct {
@@ -42,6 +45,14 @@ type Override struct {
 }
 
 func Parse(src []byte) (Metadata, error) {
+	return parse(src, false)
+}
+
+// ParseReview also accepts split package names and inspects packaging metadata.
+// Parse retains the narrower contract used by upstream recipe rewriting.
+func ParseReview(src []byte) (Metadata, error) { return parse(src, true) }
+
+func parse(src []byte, reviewMode bool) (Metadata, error) {
 	parser := tree_sitter.NewParser()
 	defer parser.Close()
 	if err := parser.SetLanguage(tree_sitter.NewLanguage(tree_sitter_bash.Language())); err != nil {
@@ -110,6 +121,10 @@ func Parse(src []byte) (Metadata, error) {
 			continue
 		}
 		if assignment.Array && key != "pkgname" || len(assignment.Values) != 1 {
+			if reviewMode && key == "pkgname" && len(assignment.Values) > 0 {
+				meta.PackageNames = append([]string(nil), assignment.Values...)
+				continue
+			}
 			return Metadata{}, fmt.Errorf("%s must be one literal value", key)
 		}
 		value := assignment.Values[0]
@@ -118,6 +133,9 @@ func Parse(src []byte) (Metadata, error) {
 			meta.PackageBase = value
 		case "pkgname":
 			meta.PackageName = value
+			if reviewMode {
+				meta.PackageNames = []string{value}
+			}
 		case "pkgver":
 			meta.Version = value
 		case "pkgrel":
@@ -177,7 +195,59 @@ func Parse(src []byte) (Metadata, error) {
 			}
 		}
 	}
+	if reviewMode {
+		meta.Packaging = map[string][]string{}
+		walk(root, func(node *tree_sitter.Node) {
+			if node.Kind() != "variable_assignment" {
+				return
+			}
+			key, rhs, appendMode, ok := splitAssignment(strings.TrimSpace(node.Utf8Text(src)))
+			if !ok || !packagingKey(key) {
+				return
+			}
+			parent := node.Parent()
+			if parent == nil || parent.Id() != root.Id() || appendMode {
+				meta.Incomplete = append(meta.Incomplete, key+" contains conditional, function-local, or appended metadata")
+				return
+			}
+			if _, exists := meta.Packaging[key]; exists {
+				meta.Incomplete = append(meta.Incomplete, key+" is assigned more than once")
+				return
+			}
+			var values []string
+			var err error
+			if strings.HasPrefix(strings.TrimSpace(rhs), "(") {
+				values, err = parseLiteralArray(rhs)
+			} else {
+				var v string
+				v, err = parseLiteralScalar(rhs)
+				values = []string{v}
+			}
+			if err == nil {
+				for i, v := range values {
+					values[i], err = expandPrimitive(v, vars)
+					if err != nil {
+						break
+					}
+				}
+			}
+			if err != nil {
+				meta.Incomplete = append(meta.Incomplete, key+" could not be resolved: "+err.Error())
+				return
+			}
+			meta.Packaging[key] = values
+		})
+	}
 	return meta, nil
+}
+
+func packagingKey(key string) bool {
+	for _, k := range []string{"depends", "makedepends", "checkdepends", "optdepends", "provides", "conflicts", "replaces", "install", "options", "backup"} {
+		if key == k || strings.HasPrefix(key, k+"_") {
+			return true
+		}
+	}
+	return false
 }
 
 func Rewrite(src []byte, override Override) ([]byte, error) {
@@ -287,7 +357,7 @@ func relevantKey(key string) bool {
 }
 
 func isChecksumKey(key string) bool {
-	for _, prefix := range []string{"md5sums", "sha1sums", "sha224sums", "sha256sums", "sha384sums", "sha512sums", "b2sums"} {
+	for _, prefix := range []string{"cksums", "md5sums", "sha1sums", "sha224sums", "sha256sums", "sha384sums", "sha512sums", "b2sums"} {
 		if key == prefix || strings.HasPrefix(key, prefix+"_") {
 			return true
 		}

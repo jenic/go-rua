@@ -15,6 +15,11 @@ type Paths struct {
 	DataCheckedTars string // ~/.local/share/rua/checked_tars
 }
 
+// ReviewStateDir contains confirmed and pending guided-upgrade records.
+func (p Paths) ReviewStateDir() string {
+	return filepath.Join(filepath.Dir(p.DataCheckedTars), "review_state")
+}
+
 // allow tests to stub the makepkg presence check
 var makepkgCheck = func() error { _, err := os.Stat("/usr/bin/makepkg"); return err }
 
