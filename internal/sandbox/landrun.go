@@ -1,11 +1,47 @@
 package sandbox
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"time"
 )
+
+// ReadStream consumes stdout without buffering an entire decompressed archive.
+// A failed inspection kills the child; stderr is bounded and never mixed with data.
+func ReadStream(cfg Config, argv []string, inspect func(io.Reader) error) error {
+	if len(argv) == 0 {
+		return fmt.Errorf("sandbox: empty argv")
+	}
+	payload, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	cmd := streamCommandHook(ctx, selfExecutable(), append([]string{"sandbox-exec"}, argv...)...)
+	cmd.Env = []string{"RUA_SANDBOX_CFG=" + string(payload)}
+	cmd.Stderr = io.Discard
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	err = inspect(stdout)
+	if err != nil {
+		cancel()
+	}
+	waitErr := cmd.Wait()
+	if err != nil {
+		return err
+	}
+	return waitErr
+}
 
 // Config describes sandbox parameters we care about
 type Config struct {
@@ -25,8 +61,9 @@ type Config struct {
 
 // execCommandHook allows tests to override process spawning.
 var (
-	execCommandHook = exec.Command
-	executableFn    = os.Executable
+	execCommandHook   = exec.Command
+	streamCommandHook = exec.CommandContext
+	executableFn      = os.Executable
 )
 
 // Run executes a command inside a Landlock sandbox via our embedded runner

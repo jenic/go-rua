@@ -1,12 +1,14 @@
 package tarcheck
 
 import (
+	"archive/tar"
 	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
+
+	"go-rua/internal/review"
 	"strings"
 
 	"go-rua/internal/sandbox"
@@ -29,7 +31,7 @@ func TarCheck(archivePath string) error {
 	execs := []string{}
 	suids := []string{}
 	for _, e := range entries {
-		if !e.IsDir && !strings.HasPrefix(e.Path, ".") {
+		if !e.IsDir && !packageMetadata(e.Path) {
 			all = append(all, e.Path)
 		}
 		if !e.IsDir && isExec(e.Perm) {
@@ -56,30 +58,33 @@ func TarCheck(archivePath string) error {
 			fmt.Print("[S]=SUID files, ")
 		}
 		fmt.Print("[O]=ok proceed: ")
-		line, _ := reader.ReadString('\n')
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("archive review cancelled: %w", err)
+		}
 		line = strings.ToLower(strings.TrimSpace(line))
 		switch line {
 		case "e":
 			for _, p := range execs {
-				fmt.Println(p)
+				fmt.Println(review.Safe(p))
 			}
 		case "l":
 			for _, p := range all {
-				fmt.Println(p)
+				fmt.Println(review.Safe(p))
 			}
 		case "f":
 			for _, p := range all {
-				if _, err := os.Stat("/" + p); err != nil {
-					fmt.Println(p)
+				if _, err := os.Lstat("/" + p); os.IsNotExist(err) {
+					fmt.Println(review.Safe(p))
 				}
 			}
 		case "s":
 			for _, p := range suids {
-				fmt.Println(p)
+				fmt.Println(review.Safe(p))
 			}
 		case "i":
 			if install != "" {
-				fmt.Println(install)
+				fmt.Println(review.Safe(install))
 			}
 		case "t":
 			// sandboxed shell with RO access to archive dir
@@ -96,7 +101,7 @@ func TarCheck(archivePath string) error {
 		case "o":
 			return nil
 		case "q":
-			os.Exit(1)
+			return fmt.Errorf("archive review cancelled")
 		}
 	}
 }
@@ -115,45 +120,43 @@ func getInput() io.Reader {
 func SetInputForTests(r io.Reader) { inputOverride = r }
 
 func listArchive(path string) ([]entry, string, error) {
-	// Use tar -tvf to list with modes via sandbox (RO on archive dir)
-	cfg := sandbox.Config{RO: []string{"/etc", filepath.Dir(path)}, ROX: []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}}
-	out, _, err := sandbox.RunCapture(cfg, []string{"tar", "-tvf", path})
+	manifest, report, err := Inspect(path)
 	if err != nil {
-		return nil, "", fmt.Errorf("tar -tvf failed: %v\n%s", err, out)
+		return nil, "", err
 	}
-	lines := strings.Split(out, "\n")
-	entries := []entry{}
-	installContent := ""
-	re := regexp.MustCompile(`^([drwxstST-]{10})\s+[^\s]+\s+\d+\s+[^\s]+\s+[^\s]+\s+(.+)$`)
-	for _, l := range lines {
-		l = strings.TrimSpace(l)
-		if l == "" {
-			continue
-		}
-		// GNU tar starts with perms; last field is path (may contain spaces). Do a best-effort parse.
-		m := re.FindStringSubmatch(l)
-		if len(m) == 3 {
-			perm := m[1]
-			path := m[2]
-			entries = append(entries, entry{Perm: perm, Path: path, IsDir: perm[0] == 'd'})
-		}
+	report.Print(os.Stdout)
+	if report.Has(review.Block) {
+		return nil, "", fmt.Errorf("archive inspection blocked")
 	}
-
-	// Try to extract .INSTALL if present
-	hasInstall := false
-	for _, e := range entries {
-		if e.Path == ".INSTALL" {
-			hasInstall = true
-			break
+	var entries []entry
+	for _, f := range manifest.Files {
+		perm := []byte("----------")
+		if f.Type == tar.TypeDir {
+			perm[0] = 'd'
 		}
-	}
-	if hasInstall {
-		out2, _, err := sandbox.RunCapture(cfg, []string{"tar", "-xOf", path, ".INSTALL"})
-		if err == nil {
-			installContent = out2
+		if f.Type == tar.TypeSymlink {
+			perm[0] = 'l'
 		}
+		for i, c := range []byte("rwxrwxrwx") {
+			if f.Mode&(1<<(8-i)) != 0 {
+				perm[i+1] = c
+			}
+		}
+		if f.Mode&04000 != 0 {
+			perm[3] = 'S'
+			if f.Mode&0100 != 0 {
+				perm[3] = 's'
+			}
+		}
+		if f.Mode&02000 != 0 {
+			perm[6] = 'S'
+			if f.Mode&0010 != 0 {
+				perm[6] = 's'
+			}
+		}
+		entries = append(entries, entry{Perm: string(perm), Path: f.Path, IsDir: f.Type == tar.TypeDir})
 	}
-	return entries, installContent, nil
+	return entries, manifest.Install, nil
 }
 
 func isExec(perm string) bool {
