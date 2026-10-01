@@ -18,7 +18,7 @@ GOFLAGS=-ldflags="${LDFLAGS}" -buildmode=pie
 GOENV := GOPATH=$(GOPATH) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOTOOLCHAIN=$(GOTOOLCHAIN)
 CACHE_DIRS := $(GOPATH) $(GOCACHE) $(GOMODCACHE)
 
-.PHONY: help build build-actual sast run fmt vet verify test check smoke install publish-check publish clean
+.PHONY: help build build-actual sast run fmt vet verify test check smoke integration-upgrade install publish-check publish clean
 
 help: ## Show available make targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .+$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -54,6 +54,9 @@ test: fmt vet verify ## Format, vet, verify, and run tests
 
 smoke: build ## Run a short integration smoke test (best-effort)
 	./scripts/smoke.sh
+
+integration-upgrade: build-actual ## Exercise an Arch fixture build and isolated pacman transaction
+	bash ./scripts/integration-upgrade.sh
 
 check: fmt vet verify test build ## Format, vet, verify, test, build, and scan
 
