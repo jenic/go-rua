@@ -83,9 +83,10 @@ func CheckMissing(names []string) ([]string, error) {
 	cmd := exec.Command("pacman", args...)
 	out, err := cmd.Output()
 	if err != nil {
-		// pacman -T returns non-zero only on fatal error; unsatisfied are printed to stdout.
-		// If we get an error here, propagate it since stdout is unreliable.
-		return nil, fmt.Errorf("pacman -T failed: %w", err)
+		// pacman uses 127 for unsatisfied dependencies; other errors are fatal.
+		if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 127 {
+			return nil, fmt.Errorf("pacman -T failed: %w", err)
+		}
 	}
 	var missing []string
 	sc := bufio.NewScanner(strings.NewReader(string(out)))

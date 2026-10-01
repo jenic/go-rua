@@ -680,3 +680,36 @@ func TestInstallCmdInstallsByDefaultUnlessStageOnly(t *testing.T) {
 		t.Fatal("install --stage-only should not install built artifacts")
 	}
 }
+
+func TestUpgradeUsesOneGuidedSessionForAllTargets(t *testing.T) {
+	restoreCLISeams(t)
+	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
+		return []pacman.ForeignPkg{{Name: "a", Version: "1-1"}, {Name: "b", Version: "1-1"}}, nil
+	}
+	aurInfoFn = func([]string) ([]aur.Package, error) {
+		return []aur.Package{{Name: "a", PackageBase: "a", Version: "2-1"}, {Name: "b", PackageBase: "b", Version: "2-1"}}, nil
+	}
+	vercmpFn = func(a, b string) (int, error) {
+		if a == b {
+			return 0, nil
+		}
+		return -1, nil
+	}
+	getIgnoredPkgsFn = func() ([]string, error) { return nil, nil }
+	installPlanFn = func(names []string) (installpkg.Plan, error) {
+		return installpkg.Plan{Targets: names, BuildOrder: []string{"shared", "a", "b"}}, nil
+	}
+	pathsInitFn = func() paths.Paths { return paths.Paths{} }
+	calls := 0
+	installInstallFn = func(names []string, _ paths.Paths, opt installpkg.Options) error {
+		calls++
+		if len(names) != 2 || !opt.Guided || opt.Plan == nil || len(opt.Plan.BuildOrder) != 3 || !opt.InstallBuilt {
+			t.Fatalf("wrong guided invocation: %v %+v", names, opt)
+		}
+		return nil
+	}
+	captureOut(func() { upgradeCmd(nil) })
+	if calls != 1 {
+		t.Fatalf("got %d installer calls", calls)
+	}
+}

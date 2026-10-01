@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +17,7 @@ import (
 	install "go-rua/internal/install"
 	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
+	"go-rua/internal/review"
 	"go-rua/internal/shellaudit"
 	"go-rua/internal/shellutil"
 	"go-rua/internal/sourceaudit"
@@ -662,16 +662,27 @@ func upgradeCmd(args []string) {
 		}
 	}
 	p := pathsInitFn()
-	for _, name := range pl.BuildOrder {
-		fmt.Printf("\n==> Upgrading AUR pkg: %s\n", name)
-		effOffline := *offline && !*online
-		installOptions := install.Options{Offline: effOffline, Force: *force, NonInteractive: false, InstallBuilt: true, DisableSeccomp: *noSeccomp}
-		if request, ok := eligible[name]; ok {
-			installOptions.PrepareBuildCopy = upstreamPrepareHookForArchitectures(request, p, *validateAllArches)
+	installOptions := install.Options{Guided: true, Plan: &pl, Devel: *devel, Offline: *offline && !*online, Force: *force, InstallBuilt: true, DisableSeccomp: *noSeccomp}
+	if len(eligible) > 0 {
+		installOptions.UpstreamBases = map[string]bool{}
+		hooks := map[string]func(string, string, string) error{}
+		for _, name := range targets {
+			if request, ok := eligible[name]; ok {
+				installOptions.UpstreamBases[request.PackageBase] = true
+				if _, exists := hooks[request.PackageBase]; !exists {
+					hooks[request.PackageBase] = upstreamPrepareHookForArchitectures(request, p, *validateAllArches)
+				}
+			}
 		}
-		if err := installInstallFn([]string{name}, p, installOptions); err != nil {
-			fatalf("upgrade failed for %s: %v", name, err)
+		installOptions.PrepareBuildCopy = func(base, reviewDir, buildDir string) error {
+			if hook := hooks[base]; hook != nil {
+				return hook(base, reviewDir, buildDir)
+			}
+			return nil
 		}
+	}
+	if err := installInstallFn(targets, p, installOptions); err != nil {
+		fatalf("upgrade failed: %v", err)
 	}
 }
 
@@ -782,7 +793,7 @@ func upstreamPrepareHookForArchitectures(request upstream.ApplyRequest, p paths.
 					fmt.Println()
 				}
 				fmt.Print("Apply this override to the ephemeral build copy? [y/N]: ")
-				answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+				answer, err := review.Answer(os.Stdin)
 				return strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes"), err
 			},
 		})

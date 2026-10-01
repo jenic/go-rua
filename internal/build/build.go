@@ -33,6 +33,16 @@ type signingConfig struct {
 // BuildDirectory builds a PKGBUILD directory using a Landlock/bwrap sandbox.
 // If seccomp is false, the seccomp denylist is not applied.
 func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool) error {
+	return buildDirectory(dir, p, offline, force, seccomp, false)
+}
+
+// BuildVerifiedDirectory builds sources already fetched and verified by the guided flow.
+// makepkg still performs its normal integrity checks again during the build.
+func BuildVerifiedDirectory(dir string, p paths.Paths, offline, force, seccomp bool) error {
+	return buildDirectory(dir, p, offline, force, seccomp, true)
+}
+
+func buildDirectory(dir string, p paths.Paths, offline, force, seccomp, verified bool) error {
 	if _, err := os.Stat(filepath.Join(dir, "PKGBUILD")); err != nil {
 		return fmt.Errorf("PKGBUILD not found in %s: %w", dir, err)
 	}
@@ -77,7 +87,7 @@ func BuildDirectory(dir string, p paths.Paths, offline, force bool, seccomp bool
 		}
 	}
 	// If offline, prefetch sources using .SRCINFO/static PKGBUILD, then build offline
-	if offline {
+	if offline && !verified {
 		if err := prefetchSourcesWithGPGHome(dir, p, seccomp, gpgHome); err != nil {
 			return err
 		}

@@ -22,8 +22,15 @@ import (
 )
 
 type Options struct {
-	Offline bool
-	Force   bool
+	// Guided selects the ordered upgrade workflow instead of the install menu.
+	Guided        bool
+	Plan          *Plan
+	Devel         bool
+	UpstreamBases map[string]bool
+	Input         io.Reader
+	Output        io.Writer
+	Offline       bool
+	Force         bool
 	// NonInteractive skips the interactive review shell/diff steps
 	NonInteractive bool
 	// InstallBuilt installs built artifacts with pacman -U after staging
@@ -56,6 +63,9 @@ const reviewUpstreamRef = "upstream/master"
 
 // Install clones AUR repos for packages, offers a simple review shell, builds and stages artifacts
 func Install(pkgs []string, p paths.Paths, opt Options) error {
+	if opt.Guided {
+		return GuidedUpgrade(pkgs, p, opt)
+	}
 	if len(pkgs) == 0 {
 		return errors.New("no packages provided")
 	}
