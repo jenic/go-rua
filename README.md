@@ -66,10 +66,16 @@ reviewed recipe; it does not establish the source author's identity.
 The approved commit is fast-forwarded into the persistent checkout. Existing
 local changes or divergent history require manual resolution. HTTPS sources
 that can be resolved statically are downloaded as data with redirect reporting;
-cross-host redirects require `accept sources`. Dynamic and VCS fetching also
-requires explicit review, then runs inside the sandbox. The effective recipe is
-verified with `makepkg --verifysource`; failures stop the build. Default builds
-remain offline. `--upstream` retains its separate generated-recipe approval.
+new cross-host redirects require `accept sources`. After a confirmed installation,
+accepted redirects are remembered for that package base and source/destination
+host pair, even when archive filenames change with the version. They remain
+visible as `INFO` with `(previously accepted)` and do not prompt again. A new host
+pair, missing baseline, installed-version drift, or pending transaction requires
+approval again. Source verification still runs on every upgrade. Dynamic and VCS
+fetching requires explicit review each time, then runs inside the sandbox. The
+effective recipe is verified with `makepkg --verifysource`; failures stop the
+build. Default builds remain offline. `--upstream` retains its separate
+generated-recipe approval.
 
 Artifacts are copied into a private staging directory and inspected using tar
 headers, including package identity, links, permissions, and content digests.

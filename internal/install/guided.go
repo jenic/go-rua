@@ -373,8 +373,9 @@ func (s *guidedSession) upgrade(base string, pkgs []aur.Package, targets []strin
 	if err != nil {
 		return "failed", err
 	}
-	fetched.Print(s.out)
-	if fetched.Has(review.Review) {
+	sourceReport := rememberedSourceReport(base, fetched, baseline)
+	sourceReport.Print(s.out)
+	if sourceReport.Has(review.Review) {
 		fmt.Fprint(s.out, "Source findings require review. Type 'accept sources' to continue, or 'skip': ")
 		answer, err := review.Answer(s.in)
 		if err != nil {
