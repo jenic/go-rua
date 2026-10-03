@@ -256,7 +256,10 @@ func (s *guidedSession) upgrade(base string, pkgs []aur.Package, targets []strin
 			break
 		}
 	}
-	diff := recipeDiff(before, c.recipe)
+	diff, err := recipeDiff(before, c.recipe)
+	if err != nil {
+		return "failed", err
+	}
 	printRecipeDiff(s.out, diff)
 	work, err := os.MkdirTemp(s.p.CacheBuildDir, "review-"+base+"-*")
 	if err != nil {

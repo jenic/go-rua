@@ -43,7 +43,13 @@ the diff, **S** skips that package base, and **Q** cancels. End-of-input cancels
 it never approves. A skipped dependency blocks consumers only when the installed
 system cannot satisfy their dependency requirements.
 
-Recipe diffs show deletions in red and additions in green on terminals. They
+Recipe diffs use Git's line-by-line unified hunks with three lines of context.
+On terminals, deletions are red and additions are green; individual character
+edits within equally sized replacement blocks are bold with inverse highlighting.
+Unchanged text between separate edits keeps its ordinary line color. Very long
+lines that exceed the character-comparison limit use ordinary line colors.
+File-mode changes and missing final newlines remain visible. Without a confirmed
+installed baseline, every recipe file is shown in full. Diffs
 honor `--color=always|never|auto`, `RUA_COLOR`, `NO_COLOR`, `CLICOLOR_FORCE`, and
 `CLICOLOR`. Redirected output stays plain unless color is explicitly forced;
 terminal controls embedded in recipe content are displayed as escaped text.
