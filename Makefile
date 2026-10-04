@@ -15,10 +15,10 @@ OUT := $(BIN_DIR)/$(BINARY)
 PKG := ./...
 LDFLAGS=-X main.Version=${COMMIT}
 GOFLAGS=-ldflags="${LDFLAGS}" -buildmode=pie
-GOENV := GOPATH=$(GOPATH) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOTOOLCHAIN=$(GOTOOLCHAIN)
+GOENV := GOWORK=off GOPATH=$(GOPATH) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOTOOLCHAIN=$(GOTOOLCHAIN)
 CACHE_DIRS := $(GOPATH) $(GOCACHE) $(GOMODCACHE)
 
-.PHONY: help build build-actual sast run fmt vet verify test check smoke integration-upgrade install publish-check publish clean
+.PHONY: help build build-actual sast run fmt vet verify test check smoke integration-upgrade integration-landlock install publish-check publish clean
 
 help: ## Show available make targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .+$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -40,14 +40,15 @@ build: sast ## Format, vet, verify, build, and scan the binary
 run: build ## Run the CLI (usage: make run ARGS="version")
 	$(OUT) $(ARGS)
 
-fmt: $(CACHE_DIRS) ## Format code with gofmt
+fmt: verify ## Format code with gofmt
 	$(GOENV) $(GO) fmt $(PKG)
 
-vet: $(CACHE_DIRS) ## Static analysis with go vet
+vet: fmt ## Static analysis with go vet
 	$(GOENV) $(GO) vet $(PKG)
 
 verify: $(CACHE_DIRS) ## Verify module dependencies
 	$(GOENV) $(GO) mod verify
+	@landlock_replacement="$$($(GOENV) $(GO) list -m -f '{{if .Replace}}replaced{{end}}' github.com/landlock-lsm/go-landlock)" && test -z "$$landlock_replacement" || { echo "Cannot verify upstream Landlock dependency; replacements are prohibited" >&2; exit 1; }
 
 test: fmt vet verify ## Format, vet, verify, and run tests
 	$(GOENV) $(GO) test $(PKG)
@@ -58,7 +59,10 @@ smoke: build ## Run a short integration smoke test (best-effort)
 integration-upgrade: build-actual ## Exercise an Arch fixture build and isolated pacman transaction
 	bash ./scripts/integration-upgrade.sh
 
-check: fmt vet verify test build ## Format, vet, verify, test, build, and scan
+integration-landlock: build-actual ## Require real kernel enforcement and verify the built CLI's Landlock dependency
+	$(GOENV) RUA_REQUIRE_LANDLOCK_TESTS=1 RUA_LANDLOCK_TEST_BINARY=$(abspath $(OUT)) $(GO) test -count=1 -v -run '^TestLandlockIntegration' $(CMD_DIR)
+
+check: fmt vet verify test build integration-landlock ## Format, vet, verify, test, build, scan, and prove Landlock enforcement
 
 install: fmt vet verify test build ## Check, build, scan, and install to /usr/local/bin
 	sudo install -v -C -o root -g root -m 0755 $(OUT) /usr/local/bin/$(notdir $(OUT))
@@ -66,7 +70,7 @@ install: fmt vet verify test build ## Check, build, scan, and install to /usr/lo
 publish-check: ## Validate a release (usage: make publish-check VERSION=v0.1.0)
 	@VERSION='$(VERSION)' ./publish.sh check
 
-publish: publish-check test ## Test, sign, tag, and publish a release
+publish: publish-check check ## Check enforcement, sign, tag, and publish a release
 	@VERSION='$(VERSION)' PUBLISH='$(PUBLISH)' ./publish.sh publish
 
 clean: ## Remove build artifacts

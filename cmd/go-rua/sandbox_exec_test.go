@@ -60,20 +60,6 @@ func TestBuildEnvDefaultPATHWhenOmitted(t *testing.T) {
 	}
 }
 
-func TestApplyLandlockStub(t *testing.T) {
-	// Ensure paths exist or not; stub ignores real enforcement
-	d := t.TempDir()
-	cfg := sandboxExecConfig{
-		RO:  []string{"/etc", d},
-		ROX: []string{"/usr", "/bin"},
-		RW:  []string{"/dev/null"},
-		RWX: []string{filepath.Join(d, "rw")},
-	}
-	if err := applyLandlock(cfg); err != nil {
-		t.Fatalf("applyLandlock stub should not error: %v", err)
-	}
-}
-
 func TestSandboxExecMissingConfigExits(t *testing.T) {
 	// Override osExit to capture code
 	oldExit := osExitFn

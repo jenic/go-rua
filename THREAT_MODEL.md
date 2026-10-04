@@ -105,11 +105,31 @@ Builds are offline by default. The main build runs `makepkg -f` in a sandbox wit
 
 - Minimal environment pass-through.
 - Build outputs directed into the build directory.
-- Landlock filesystem restrictions.
+- Filesystem restrictions from the selected backend: upstream Landlock when bubblewrap is not selected, or bubblewrap bind mounts when it is selected. These backends are not stacked.
 - Bubblewrap network isolation with `--unshare-net` for offline builds by default.
 - A seccomp denylist for selected high-risk syscalls unless disabled with `--no-seccomp`.
 
 Landlock limits filesystem access but does not provide network isolation. Offline builds require bubblewrap by default; users who explicitly set `RUA_ALLOW_WEAK_OFFLINE=1` with `RUA_NO_BWRAP=1` accept weaker Landlock-only isolation without a private network namespace.
+
+The Landlock backend requires ABI 3 or newer and handles all filesystem rights
+through ABI 3, including truncation and cross-directory rename/link. Explicit RO,
+ROX, RW, and RWX grants separate read, execute, and write permissions. File and
+device grants omit directory-only rights. Rename/link between writable directories
+is permitted only when it cannot escape the policy or gain permissions. Built-in
+paths may be absent; an absent explicitly configured path fails enforcement.
+The upstream library applies Landlock and `no_new_privs` to all Go/CGO threads;
+children inherit the restrictions. A strict failure prevents the target command
+from starting. Explicit `BestEffort` logs a warning and continues after an
+enforcement error, so successful execution in that mode is not proof of confinement.
+
+Supported Makefile builds ignore Go workspaces, verify module checksums, and
+reject replacements for the pinned upstream Landlock dependency. Offline builds
+require the authentic cached dependency rather than a substitute. The mandatory
+`make integration-landlock` gate verifies the rebuilt binary's dependency version,
+checksum, and lack of a replacement, then tests allowed and denied operations,
+thread enforcement, and child inheritance against the real kernel. `make check`
+and `make publish` require this gate; ordinary tests may skip the kernel probes
+on unsupported hosts.
 
 ### Archive Review
 
@@ -258,6 +278,8 @@ Privileged pacman operations are outside the sandbox. Installing a package is th
 - Source prefetch has network access by design.
 - `--online` allows network access during the main build.
 - Landlock alone does not guarantee network isolation.
+- The Landlock backend retains shared writable/executable `/tmp` and `/var/tmp` and writable `/dev/shm` grants. Data beneath these defaults is accessible according to those grants; they are not private temporary mounts.
+- Explicit `BestEffort` can continue without successful Landlock enforcement after a warning. Strict ABI 3 enforcement is required for a confinement guarantee from this backend.
 - Offline builds can run with Landlock-only isolation only when the user explicitly sets `RUA_ALLOW_WEAK_OFFLINE=1` and disables bubblewrap.
 - Seccomp is a denylist, not a complete syscall policy.
 - `--no-seccomp` disables the seccomp mitigation.

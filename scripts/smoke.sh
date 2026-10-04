@@ -5,8 +5,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
 echo "[smoke] Building CLI"
-env GOMODCACHE="$ROOT_DIR/.gomodcache" GOCACHE="$ROOT_DIR/.gocache" \
-  go build -o bin/go-rua ./cmd/go-rua
+make build-actual
 
 echo "[smoke] Running basic commands"
 ./bin/go-rua version
@@ -38,4 +37,3 @@ else
 fi
 
 echo "[smoke] OK"
-

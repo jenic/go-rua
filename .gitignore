@@ -1,5 +1,6 @@
 bin/
 go.work
+go.work.sum
 third_party/
 .gocache/
 .gocache-tests/

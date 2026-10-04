@@ -9,8 +9,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-
-	ll "github.com/landlock-lsm/go-landlock/landlock"
 )
 
 // seams for testing
@@ -277,78 +275,6 @@ func parentDirsForBinds(binds []bwrapBind) []string {
 		return out[i] < out[j]
 	})
 	return out
-}
-
-// applyLandlock constructs and installs a Landlock ruleset based on cfg.
-func applyLandlock(cfg sandboxExecConfig) error {
-	// Determine the superset of filesystem accesses we might grant.
-	handled := ll.AccessFSReadFile | ll.AccessFSReadDir |
-		ll.AccessFSExecute | ll.AccessFSWriteFile | ll.AccessFSRemoveFile |
-		ll.AccessFSRemoveDir | ll.AccessFSMakeChar | ll.AccessFSMakeDir |
-		ll.AccessFSMakeReg | ll.AccessFSMakeSock | ll.AccessFSMakeFifo |
-		ll.AccessFSMakeBlock | ll.AccessFSMakeSym |
-		ll.AccessFSTruncate
-
-	rs, err := ll.NewRuleset(handled)
-	if err != nil {
-		return err
-	}
-
-	// Helper to add a path rule with given allowed access
-	add := func(p string, acc ll.AccessFS) error {
-		if p == "" {
-			return nil
-		}
-		return rs.AddRule(ll.PathBeneath{Path: p, AllowedAccess: acc})
-	}
-
-	// Default allowances similar to a typical baseline
-	// Allow read-only access to system dirs and devices
-	defaultsRO := []string{"/etc", "/proc", "/sys"}
-	// Exec allowed from standard system locations
-	defaultsROX := []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"}
-	// Writable temp areas commonly used by build tools
-	defaultsRWX := []string{"/tmp", "/var/tmp"}
-	// Device nodes that often need write access (tty, null) and pseudo terminals/shm
-	defaultsRW := []string{"/dev/null", "/dev/tty", "/dev/pts", "/dev/shm"}
-
-	// Merge defaults with user-provided (Go 1.22+)
-	ro := slices.Concat(defaultsRO, cfg.RO)
-	rox := slices.Concat(defaultsROX, cfg.ROX)
-	rw := slices.Concat(defaultsRW, cfg.RW)
-	rwx := slices.Concat(defaultsRWX, cfg.RWX)
-
-	roAcc := ll.AccessFSReadFile | ll.AccessFSReadDir
-	roxAcc := roAcc | ll.AccessFSExecute
-	rwAcc := roAcc | ll.AccessFSWriteFile | ll.AccessFSRemoveFile | ll.AccessFSRemoveDir |
-		ll.AccessFSMakeChar | ll.AccessFSMakeDir | ll.AccessFSMakeReg | ll.AccessFSMakeSock |
-		ll.AccessFSMakeFifo | ll.AccessFSMakeBlock | ll.AccessFSMakeSym | ll.AccessFSTruncate
-	rwxAcc := rwAcc | ll.AccessFSExecute
-
-	// Add rules
-	for _, p := range ro {
-		if err := add(p, roAcc); err != nil {
-			return err
-		}
-	}
-	for _, p := range rox {
-		if err := add(p, roxAcc); err != nil {
-			return err
-		}
-	}
-	for _, p := range rw {
-		if err := add(p, rwAcc); err != nil {
-			return err
-		}
-	}
-	for _, p := range rwx {
-		if err := add(p, rwxAcc); err != nil {
-			return err
-		}
-	}
-
-	// Finally restrict this process
-	return rs.RestrictSelf()
 }
 
 // buildEnv constructs the child environment from allowed keys.

@@ -109,10 +109,12 @@ It does not install the fixture into the host package database.
 
 ## Sandboxing
 
-- **Landlock:** Default file-system sandbox with a minimal baseline:
+- **Landlock:** Filesystem sandbox using the pinned upstream module and requiring kernel ABI 3+ (including truncation protection):
   - RO: `/etc`, `/proc`, `/sys`; ROX: `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`.
   - RW: `/dev/null`, `/dev/tty`, `/dev/pts`, `/dev/shm`; RWX: `/tmp`, `/var/tmp`.
-  - Minimal env pass-through. `no_new_privs` set best-effort before exec.
+  - RO permits reads; ROX adds execution; RW adds writes, truncation, creation, deletion, and cross-directory rename/link; RWX also permits execution. Rename/link cannot escape the policy or gain permissions. File and device grants use only rights valid for those path types.
+  - Missing built-in paths are skipped; missing explicitly configured paths fail. Enforcement and `no_new_privs` apply to all Go/CGO threads and are inherited by children. Strict enforcement failures stop execution; explicit `BestEffort` warns and continues.
+  - Minimal environment pass-through. The shared writable `/tmp`, `/var/tmp`, and `/dev/shm` defaults remain broad grants; this backend does not create private temporary mounts.
 - **Bubblewrap:** When `--offline`, go-rua requires bubblewrap network isolation with `--unshare-net` and bubblewrap bind mounts. When bubblewrap is used, Landlock is not also applied in that sandbox process. To accept weaker Landlock-only offline isolation, set `RUA_ALLOW_WEAK_OFFLINE=1` with `RUA_NO_BWRAP=1`.
 - **Seccomp denylist:** Optional and on by default. A minimal seccomp-bpf denylist blocks risky syscalls (ptrace, bpf, userfaultfd, kexec, perf_event_open, name/open_by_handle, setns, mount family, pivot_root, module load, keyctl, process_vm_* , fanotify_init, chroot, reboot, iopl/ioperm, swapon/swapoff). Disable with `--no-seccomp` for debugging.
 - **Offline builds:** By default, go-rua builds offline. It first runs a prefetch step (`makepkg -f --verifysource`) with network allowed, using a static PKGBUILD generated from `.SRCINFO` when available for `install`/`builddir`, then builds with network disabled. Guided upgrades verify the approved effective recipe directly after review. Use `--online` to allow network during the build.
@@ -153,7 +155,18 @@ It does not install the fixture into the host package database.
 - Build: `make build` (formats first, then writes `bin/go-rua`)
 - Format: `make fmt`
 - Test: `make test` (formats first)
-- Full local check: `make check` (format, vet, test, build)
+- Enforcement tests: `make integration-landlock` (rebuilds the CLI and requires real kernel enforcement and pinned dependency provenance)
+- Full local check: `make check` (verify, format, vet, test, build, vulnerability scan, enforcement tests)
 - Global help: `go-rua help` or `go-rua --help`
 - Detailed command help: `go-rua help <command>`, `go-rua <command> --help`, or `go-rua <command> -h`
 - Smoke test: `make smoke` (best-effort; skips AUR checks if offline)
+
+Makefile Go commands set `GOWORK=off`, use local caches, verify module checksums,
+and reject Landlock replacements. Offline builds require the authentic pinned
+dependencies and toolchain in those caches. Local stubs are unsupported.
+`make test` may skip enforcement probes on unsupported kernels;
+`make integration-landlock`, `make check`, and `make publish` require ABI 3+ and
+never skip that gate. Probe fixtures live under `.gocache-tests`; if the checkout
+is inside a default allowed tree such as `/tmp`, set `RUA_LANDLOCK_TEST_ROOT` to a
+private writable directory outside all default grants so denied-access checks
+remain meaningful.

@@ -18,43 +18,20 @@
 - Format: `make fmt`
 - Vet: `make vet`
 - Tests: `make test` (runs `make fmt` first; add `_test.go` alongside code)
-- Full local check: `make check` (format, vet, test, build)
+- Enforcement tests: `make integration-landlock` (requires real Landlock ABI 3+)
+- Full local check: `make check` (verify, format, vet, test, build, vulnerability scan, enforcement tests)
 
-Requirements: Go 1.26+ with toolchain `go1.26.4`, Linux kernel with Landlock support, Arch tools (`makepkg`, `pacman`, `vercmp`, `tar`, `git`, `shellcheck`, `namcap`).
+Requirements: Go 1.26+ with toolchain `go1.26.6`, Linux kernel with Landlock ABI 3+ for the Landlock backend, Arch tools (`makepkg`, `pacman`, `vercmp`, `tar`, `git`, `shellcheck`, `namcap`).
 
-## Workspaces (go work) and Local Replacements
+## Dependency Integrity and Workspaces
 
-This repo prefers using Go workspaces for local overrides instead of editing `go.mod` replaces. This is especially helpful when operating in restricted or offline environments.
+Use the pinned upstream `github.com/landlock-lsm/go-landlock` module from `go.mod` and `go.sum`. Never replace this security dependency with a local stub, fork, or workspace module. A successful no-op implementation would disable filesystem enforcement while reporting success.
 
-Recommended setup (no network):
+All Makefile Go commands set `GOWORK=off` and use workspace-local `GOCACHE`, `GOMODCACHE`, and `GOPATH`. `make verify` verifies module checksums and rejects Landlock replacements. Direct Go commands must use the same environment and run module verification before using cached dependencies.
 
-- Initialize workspace in the repo root: `go work init .`
-- Add the local Landlock stub module: `go work use ./third_party/go-landlock`
-- Ensure the stub’s module path matches upstream (`module github.com/landlock-lsm/go-landlock`).
-- Do NOT add `replace` lines to `go.mod`. The workspace will satisfy the dependency.
+Offline development requires the authentic pinned modules and Go toolchain to be present in the local cache. Missing dependencies must produce an error; do not introduce substitutes. Local `go.work` and `go.work.sum` files are ignored and cannot affect the supported Makefile build.
 
-Resulting `go.work` (example):
-
-```
-go 1.26
-
-toolchain go1.26.4
-
-use (
-    .
-    ./third_party/go-landlock
-)
-```
-
-Toggling between stub and upstream:
-
-- Use stub (offline): keep the `go.work` above and build normally.
-- Use upstream (online): either remove `./third_party/go-landlock` from `go.work` or set `GOWORK=off` when building to ignore the workspace, then run `go mod tidy` as needed.
-
-Notes:
-
-- `go.work` affects local development only and is not published. CI can set `GOWORK=off` to ensure `go.mod` integrity.
-- If you need a one-off mapping, you can also run: `go work edit -use ./third_party/go-landlock`.
+`make integration-landlock` rebuilds the CLI, checks its upstream module version/checksum and absence of a replacement, and exercises real permissions in subprocesses. It fails when Landlock ABI 3+ is unavailable. `make check` and `make publish` require this gate. Ordinary `make test` may skip kernel enforcement tests on unsupported hosts. Fixtures must be outside the sandbox's default grants; set `RUA_LANDLOCK_TEST_ROOT` to a private directory outside those paths if the checkout lives under `/tmp` or another allowed tree.
 
 ## Coding Style & Naming Conventions
 - Use standard Go style; run `make fmt` before pushing changes. Tabs/indentation as produced by gofmt.
@@ -74,6 +51,6 @@ Notes:
 - CI expectations: `make check` succeeds, formatting applied, `go vet` clean, tests pass, and the binary builds.
 
 ## Security & Configuration Tips
-- Sandboxing: builds and checks run via Landlock using go-landlock; builds are offline by default. Use `--online` to allow network for fetching sources.
+- Sandboxing: the Landlock backend uses upstream ABI 3 enforcement on all threads and inherited child processes; strict failures stop execution. Explicit `BestEffort` keeps warning-and-continue behavior. Bubblewrap uses its own filesystem mounts instead of stacking Landlock. Builds are offline by default; use `--online` to allow network for fetching sources.
 - System deps: makepkg and package build dependencies must be installed outside the sandbox.
 - Paths: review at `~/.config/rua/pkg/<pkgbase>`, builds at `~/.cache/rua/build/<pkgbase>`, staged artifacts at `~/.local/share/rua/checked_tars/<pkgbase>`.
