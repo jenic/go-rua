@@ -226,6 +226,9 @@ Publishing requires a clean worktree, git-cliff, a working local Git signing
 identity, and a GitHub push URL. The command runs checks, creates a signed
 annotated tag with git-cliff's notes, and pushes only that tag. GitHub Actions
 creates the release; no long-lived signing key or release token is needed in CI.
+SCP-style SSH aliases such as `github:OWNER/go-rua.git` are supported when
+`ssh -G github` resolves to `hostname github.com` and `user git` on the publishing
+machine. The original alias is preserved so its SSH identity settings apply.
 Tags must be `vMAJOR.MINOR.PATCH`, optionally followed by a SemVer prerelease,
 without build metadata. Prereleases do not become the latest stable release.
 Validate setup with a new prerelease before publishing a stable version.

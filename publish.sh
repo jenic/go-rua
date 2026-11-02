@@ -7,6 +7,32 @@ version=${VERSION:-}
 remote=${RELEASE_REMOTE:-github}
 fail() { echo "publish: $*" >&2; exit 1; }
 
+validate_push_url() {
+  local url=$1 target config key value hostname= user=
+  [[ $url != *$'\n'* ]] || fail 'RELEASE_REMOTE must have exactly one push URL'
+  if [[ $url =~ ^(git@github\.com:|https://github\.com/|ssh://git@github\.com/)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    return
+  fi
+  # SCP-style remotes may use an SSH Host alias to select an account/key.
+  # Resolve configuration locally (-G makes no network connection), preserving
+  # the alias for the actual ls-remote and push commands.
+  if [[ $url =~ ^(([A-Za-z0-9_.-]+)@)?([A-Za-z0-9][A-Za-z0-9_.-]*):[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    target=${BASH_REMATCH[1]}${BASH_REMATCH[3]}
+    command -v ssh >/dev/null || fail 'ssh is required to resolve the release remote host alias'
+    config=$(ssh -G "$target") || fail "unable to resolve SSH configuration for $target"
+    while read -r key value; do
+      case $key in
+        hostname) hostname=$value ;;
+        user) user=$value ;;
+      esac
+    done <<< "$config"
+    [[ ${hostname,,} == github.com && $user == git ]] ||
+      fail "SSH destination $target resolves to $user@$hostname; expected git@github.com"
+    return
+  fi
+  fail 'RELEASE_REMOTE must use a GitHub URL or an SSH alias resolving to git@github.com'
+}
+
 preflight() {
   RELEASE_TAG="$version" bash .github/scripts/release.sh metadata >/dev/null
   [[ $remote =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail 'invalid RELEASE_REMOTE'
@@ -18,9 +44,7 @@ preflight() {
   status=$(git status --porcelain)
   [[ -z $status ]] || fail 'refusing to publish from a dirty worktree'
   push_url=$(git remote get-url --push --all "$remote")
-  # Reject non-GitHub and multiple push destinations, including the Gitea origin.
-  [[ $push_url =~ ^(git@github\.com:|https://github\.com/|ssh://git@github\.com/)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
-    fail 'RELEASE_REMOTE must have exactly one public GitHub push URL'
+  validate_push_url "$push_url"
   tags=$(git tag --list "$version")
   [[ -z $tags ]] || fail "Git tag $version already exists locally"
   if git ls-remote --exit-code --tags "$push_url" "refs/tags/$version" >/dev/null; then

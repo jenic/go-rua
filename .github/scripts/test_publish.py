@@ -46,6 +46,11 @@ if tool == 'git':
         fail('FAIL_PUSH')
     elif args[:1] == ['describe']: print('v1.2.2')
     else: raise AssertionError(args)
+elif tool == 'ssh':
+    assert args[0] == '-G' and len(args) == 2
+    fail('FAIL_SSH')
+    print('hostname ' + os.getenv('SSH_HOSTNAME', 'gitea.example'))
+    print('user ' + os.getenv('SSH_USER', 'git'))
 elif tool == 'git-cliff':
     assert args == ['--unreleased', '--tag', os.environ['VERSION']]
     (root / 'cliff').touch(); fail('FAIL_CLIFF')
@@ -92,7 +97,7 @@ class PublishTests(unittest.TestCase):
             '        self.assertFalse(os.getenv("FAIL_RELEASE_TEST"))\n')
         tools = self.root / 'tools'
         tools.mkdir()
-        for name in ['git', 'git-cliff', 'go']:
+        for name in ['git', 'git-cliff', 'go', 'ssh']:
             path = tools / name
             path.write_text(FAKE_TOOL)
             path.chmod(0o755)
@@ -131,6 +136,31 @@ class PublishTests(unittest.TestCase):
             self.run_make('publish-check', version=version, success=False)
         self.assertEqual(self.calls(), [])
         self.assertFalse((self.worktree / 'injected').exists())
+
+    def test_ssh_alias_is_resolved_locally_and_preserved_for_push(self):
+        for url, target in [('github:jenic/go-rua.git', 'github'),
+                            ('git@github-work:jenic/go-rua.git', 'git@github-work')]:
+            with self.subTest(url=url):
+                self.run_make(PUBLISH='1', REMOTE_URL=url, SSH_HOSTNAME='github.com')
+                self.assertIn(['ssh', '-G', target], self.calls())
+                self.assertIn(['git', 'ls-remote', '--exit-code', '--tags', url, 'refs/tags/v1.2.3'], self.calls())
+
+    def test_alias_resolution_must_succeed_and_match_github_git_user(self):
+        for env in [{'SSH_HOSTNAME': 'gitea.example'},
+                    {'SSH_HOSTNAME': 'github.com.evil'},
+                    {'SSH_HOSTNAME': 'github.com', 'SSH_USER': 'root'},
+                    {'FAIL_SSH': '1'}]:
+            with self.subTest(env=env):
+                self.run_make('publish-check', success=False,
+                              REMOTE_URL='github:jenic/go-rua.git', **env)
+        self.assertEqual(self.writes(), [])
+        self.assertFalse(any(c[:2] == ['git', 'ls-remote'] for c in self.calls()))
+
+    def test_multiple_alias_push_urls_fail_before_ssh_resolution(self):
+        self.run_make('publish-check', success=False,
+                      REMOTE_URL='github:jenic/go-rua.git\ngithub:other/project.git',
+                      SSH_HOSTNAME='github.com')
+        self.assertFalse(any(c[0] == 'ssh' for c in self.calls()))
 
     def test_preconditions_fail_before_tests_or_writes(self):
         for failure in ['NO_GIT', 'FAIL_STATUS', 'DIRTY', 'NO_REMOTE', 'FAIL_TAG_LIST',
