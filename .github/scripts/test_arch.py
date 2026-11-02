@@ -88,12 +88,34 @@ esac
         self.fake('pacman', '''
 while (($#)); do
   case $1 in
+    --config) transaction_config=$2; shift 2 ;;
     --root) transaction_root=$2; shift 2 ;;
+    --dbpath) transaction_db=$2; shift 2 ;;
+    --cachedir) transaction_cache=$2; shift 2 ;;
+    --gpgdir) transaction_gpg=$2; shift 2 ;;
+    --hookdir) transaction_hooks=$2; shift 2 ;;
+    --logfile) transaction_log=$2; shift 2 ;;
     -U) archive=$2; shift 2 ;;
     *) shift ;;
   esac
 done
+if [[ ${REQUIRE_PRIVATE_PACMAN:-0} == 1 ]]; then
+  if [[ -z ${transaction_config:-} ]] || [[ $(<"$transaction_config") == *DownloadUser* ]]; then
+    echo 'error: failed to chown temporary download directory: Invalid argument' >&2
+    exit 1
+  fi
+  for directory in "$transaction_db" "$transaction_cache" "$transaction_gpg" "$transaction_hooks"; do
+    [[ -d $directory && $directory == "${transaction_root%/root}/"* ]] || exit 2
+  done
+  [[ $transaction_log == "$transaction_root/"* ]] || exit 2
+  cp "$transaction_config" "$FIXTURE/pacman-config"
+  printf '%s\n' "$transaction_config" >> "$FIXTURE/config-invocations"
+fi
 if [[ -n ${archive:-} ]]; then
+  if [[ ${FAIL_PACMAN_INSTALL:-0} == 1 ]]; then
+    echo 'error: transaction failed' >&2
+    exit 23
+  fi
   mkdir -p "$transaction_root/usr/share/go-rua-integration-fixture"
   cp "$(dirname "$archive")/payload" "$transaction_root/usr/share/go-rua-integration-fixture/payload"
   printf '%s' "$archive" > "$FIXTURE/installed-archive"
@@ -118,6 +140,28 @@ fi
                 output = self.run_script(False, RELEASE_BINARY=binary, ARCHIVE_EXTENSIONS=extensions)
                 self.assertIn(f'expected exactly one package archive, found {count}', output)
                 self.assertIn('payload', output)
+
+    def test_transaction_uses_private_config_without_unmapped_download_user(self):
+        binary = self.package_fixture_tools()
+        output = self.run_script(True, RELEASE_BINARY=binary, REQUIRE_PRIVATE_PACMAN='1')
+        config = (self.root / 'pacman-config').read_text()
+        self.assertIn('[options]', config)
+        self.assertIn('LocalFileSigLevel = Optional', config)
+        for inherited in ['DownloadUser', 'Include', '[core]', '[extra]', 'DisableSandbox']:
+            self.assertNotIn(inherited, config)
+        invocations = (self.root / 'config-invocations').read_text().splitlines()
+        self.assertEqual(len(invocations), 2)
+        self.assertEqual(invocations[0], invocations[1])
+        self.assertIn('PASS:', output)
+
+    def test_pacman_install_failure_remains_fatal(self):
+        binary = self.package_fixture_tools()
+        output = self.run_script(False, RELEASE_BINARY=binary, FAIL_PACMAN_INSTALL='1')
+        self.assertIn('install into isolated pacman root', output)
+        self.assertIn('error: transaction failed', output)
+        self.assertIn('exit 23', output)
+        self.assertNotIn('query installed fixture', output)
+        self.assertNotIn('PASS:', output)
 
     def test_silent_command_failure_reports_stage_and_exit_code(self):
         binary = self.package_fixture_tools()

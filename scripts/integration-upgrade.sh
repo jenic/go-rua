@@ -31,7 +31,26 @@ unshare --user --map-root-user --mount true
 bwrap --unshare-user --unshare-net --ro-bind / / -- true
 fixture_dir=$(mktemp -d "${TMPDIR:-/tmp}/go-rua-integration.XXXXXXXX")
 trap 'rm -rf -- "$fixture_dir"' EXIT
-mkdir -p "$fixture_dir/recipe" "$fixture_dir/root/var/lib/pacman" "$fixture_dir/root/var/log"
+mkdir -p "$fixture_dir/recipe" "$fixture_dir/root/var/lib/pacman" "$fixture_dir/root/var/log" \
+  "$fixture_dir/cache" "$fixture_dir/gnupg" "$fixture_dir/hooks"
+# Use only local fixture policy. The host's DownloadUser UID cannot be mapped
+# by --map-root-user; its repositories, cache, keyring, and hooks are unrelated
+# to this locally built, unsigned test package.
+cat > "$fixture_dir/pacman.conf" <<'CONFIG'
+[options]
+Architecture = auto
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Optional
+CONFIG
+pacman_args=(
+  --config "$fixture_dir/pacman.conf"
+  --root "$fixture_dir/root"
+  --dbpath "$fixture_dir/root/var/lib/pacman"
+  --logfile "$fixture_dir/root/var/log/pacman.log"
+  --cachedir "$fixture_dir/cache"
+  --gpgdir "$fixture_dir/gnupg"
+  --hookdir "$fixture_dir/hooks"
+)
 printf 'guided upgrade integration fixture\n' > "$fixture_dir/recipe/payload"
 fixture_hash=$(sha256sum "$fixture_dir/recipe/payload")
 fixture_hash=${fixture_hash%% *}
@@ -71,13 +90,10 @@ stage 'review package archive'
 printf 'o\n' | "$binary" tarcheck "$fixture_archive"
 stage 'install into isolated pacman root'
 unshare --user --map-root-user --mount \
-  pacman --root "$fixture_dir/root" --dbpath "$fixture_dir/root/var/lib/pacman" \
-  --logfile "$fixture_dir/root/var/log/pacman.log" --noscriptlet --noconfirm \
-  -U "$fixture_archive"
+  pacman "${pacman_args[@]}" --noscriptlet --noconfirm -U "$fixture_archive"
 stage 'query installed fixture'
 unshare --user --map-root-user --mount \
-  pacman --root "$fixture_dir/root" --dbpath "$fixture_dir/root/var/lib/pacman" \
-  -Q go-rua-integration-fixture
+  pacman "${pacman_args[@]}" -Q go-rua-integration-fixture
 stage 'compare installed payload'
 cmp "$fixture_dir/recipe/payload" "$fixture_dir/root/usr/share/go-rua-integration-fixture/payload"
 echo 'PASS: source verification, sandboxed build, archive inspection, isolated pacman transaction'

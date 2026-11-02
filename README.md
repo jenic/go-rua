@@ -105,6 +105,9 @@ by a private session lock.
 Run `make test` for deterministic workflow and archive fixtures. On an Arch host,
 `make integration-upgrade` exercises a real sandboxed fixture build, archive
 inspection, and a pacman transaction in a temporary root using a user namespace.
+The transaction uses a fixture-only pacman configuration, cache, keyring, and
+hook directory. It omits the host's `DownloadUser`, whose UID is unavailable in
+the single-user namespace, and permits the unsigned local fixture package.
 It does not install the fixture into the host package database.
 
 ## Sandboxing
