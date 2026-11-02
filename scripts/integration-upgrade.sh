@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # A real Arch build and isolated package transaction; no host package installation.
-set -euo pipefail
+set -Eeuo pipefail
+phase=preflight
+trap 'failure_code=$?; printf "FAIL: Arch integration (%s), line %s: %s (exit %s)\n" "$phase" "$LINENO" "$BASH_COMMAND" "$failure_code" >&2; exit "$failure_code"' ERR
+stage() {
+  phase=$1
+  printf '[arch] %s\n' "$phase"
+}
 repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 binary=${RELEASE_BINARY:-$repo_dir/bin/go-rua}
 unavailable() {
@@ -42,17 +48,36 @@ package() {
 }
 RECIPE
 printf "sha256sums=('%s')\n" "$fixture_hash" >> "$fixture_dir/recipe/PKGBUILD"
-# PKGEXT makes the fixture independent of compression tool configuration.
-PKGEXT=.pkg.tar "$binary" builddir "$fixture_dir/recipe"
-fixture_archives=("$fixture_dir/recipe/"*.pkg.tar)
-[[ ${#fixture_archives[@]} == 1 && -f ${fixture_archives[0]} ]]
-printf 'o\n' | "$binary" tarcheck "${fixture_archives[0]}"
+stage 'build fixture package'
+"$binary" builddir "$fixture_dir/recipe"
+stage 'locate package archive'
+# The build sandbox filters the caller's environment, including PKGEXT. Accept
+# the supported makepkg formats instead of assuming an environment override.
+shopt -s nullglob
+fixture_archives=("$fixture_dir/recipe/"*.pkg.tar{,.xz,.gz,.gzip,.zst,.zstd})
+if ((${#fixture_archives[@]} != 1)); then
+  printf 'FAIL: expected exactly one package archive, found %s in %s\n' "${#fixture_archives[@]}" "$fixture_dir/recipe" >&2
+  printf 'Directory contents:\n' >&2
+  printf '  %s\n' "$fixture_dir/recipe/"* >&2
+  exit 1
+fi
+fixture_archive=${fixture_archives[0]}
+if [[ ! -f $fixture_archive || -L $fixture_archive ]]; then
+  printf 'FAIL: invalid package archive: %s\n' "$fixture_archive" >&2
+  exit 1
+fi
+printf '[arch] using archive: %s\n' "$fixture_archive"
+stage 'review package archive'
+printf 'o\n' | "$binary" tarcheck "$fixture_archive"
+stage 'install into isolated pacman root'
 unshare --user --map-root-user --mount \
   pacman --root "$fixture_dir/root" --dbpath "$fixture_dir/root/var/lib/pacman" \
   --logfile "$fixture_dir/root/var/log/pacman.log" --noscriptlet --noconfirm \
-  -U "${fixture_archives[0]}"
+  -U "$fixture_archive"
+stage 'query installed fixture'
 unshare --user --map-root-user --mount \
   pacman --root "$fixture_dir/root" --dbpath "$fixture_dir/root/var/lib/pacman" \
   -Q go-rua-integration-fixture
+stage 'compare installed payload'
 cmp "$fixture_dir/recipe/payload" "$fixture_dir/root/usr/share/go-rua-integration-fixture/payload"
 echo 'PASS: source verification, sandboxed build, archive inspection, isolated pacman transaction'
