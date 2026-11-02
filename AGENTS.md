@@ -20,14 +20,19 @@
 - Tests: `make test` (runs `make fmt` first; add `_test.go` alongside code)
 - Enforcement tests: `make integration-landlock` (requires real Landlock ABI 3+)
 - Full local check: `make check` (verify, format, vet, test, build, vulnerability scan, enforcement tests)
+- Release automation tests: `make test-release` (offline GitHub/Cosign/publisher fixtures)
+- Release build: `make release-all VERSION=v1.2.3`; reproducibility: `make verify-repro VERSION=v1.2.3`
+- Packaged executable gate: `make test-release-binary VERSION=v1.2.3 RELEASE_BINARY=/absolute/path/go-rua` (does not rebuild it)
 
-Requirements: Go 1.26+ with toolchain `go1.26.6`, Linux kernel with Landlock ABI 3+ for the Landlock backend, Arch tools (`makepkg`, `pacman`, `vercmp`, `tar`, `git`, `shellcheck`, `namcap`).
+Requirements: Go 1.26+ with toolchain `go1.26.10`, Linux kernel with Landlock ABI 3+ for the Landlock backend, Arch tools (`makepkg`, `pacman`, `vercmp`, `tar`, `git`, `shellcheck`, `namcap`).
 
 ## Dependency Integrity and Workspaces
 
 Use the pinned upstream `github.com/landlock-lsm/go-landlock` module from `go.mod` and `go.sum`. Never replace this security dependency with a local stub, fork, or workspace module. A successful no-op implementation would disable filesystem enforcement while reporting success.
 
 All Makefile Go commands set `GOWORK=off` and use workspace-local `GOCACHE`, `GOMODCACHE`, and `GOPATH`. `make verify` verifies module checksums and rejects Landlock replacements. Direct Go commands must use the same environment and run module verification before using cached dependencies.
+
+Use `make deps` to download pinned modules into those caches and verify them. Builds and tests use `-mod=readonly`. Release binaries require native Linux amd64 CGO and PIE; do not copy a `CGO_ENABLED=0` release configuration from another project. `make publish` runs both `make check` and `make test-release`, then requires `PUBLISH=1` to create and push a signed tag to `RELEASE_REMOTE` (default `github`). Git metadata operations remain maintainer-run.
 
 Offline development requires the authentic pinned modules and Go toolchain to be present in the local cache. Missing dependencies must produce an error; do not introduce substitutes. Local `go.work` and `go.work.sum` files are ignored and cannot affect the supported Makefile build.
 

@@ -1,59 +1,56 @@
-#!/bin/sh
-
-set -eu
-
-root_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+#!/usr/bin/env bash
+# Maintainer-invoked tooling. CI publishes artifacts after this signed tag push.
+set -euo pipefail
+root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$root_dir"
-
-action=${1:-check}
 version=${VERSION:-}
-publish=${PUBLISH:-0}
-
-fail() {
-	printf '%s\n' "$*" >&2
-	exit 1
-}
+remote=${RELEASE_REMOTE:-github}
+fail() { echo "publish: $*" >&2; exit 1; }
 
 preflight() {
-	[ -n "$version" ] || fail "VERSION is required, for example: make publish VERSION=v0.1.0"
-
-	command -v git-cliff >/dev/null 2>&1 || fail "git-cliff is required before publishing."
-	command -v git >/dev/null 2>&1 || fail "git is required before publishing."
-
-	printf '%s\n' "$version" | grep -Eq \
-		'^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$' ||
-		fail "VERSION must be a semantic version tag such as v0.1.0 or v1.2.3-rc.1"
-
-	[ -z "$(git status --porcelain)" ] ||
-		fail "Refusing to publish from a dirty worktree. Commit or stash changes first."
-
-	git remote get-url origin >/dev/null 2>&1 ||
-		fail "The git remote 'origin' is required before publishing."
-
-	if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
-		fail "Git tag $version already exists."
-	fi
+  RELEASE_TAG="$version" bash .github/scripts/release.sh metadata >/dev/null
+  [[ $remote =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail 'invalid RELEASE_REMOTE'
+  for tool in git git-cliff; do
+    command -v "$tool" >/dev/null || fail "$tool is required before publishing."
+  done
+  [[ $(git rev-parse --is-inside-work-tree) == true ]] || fail 'a Git worktree is required'
+  local status tags push_url result
+  status=$(git status --porcelain)
+  [[ -z $status ]] || fail 'refusing to publish from a dirty worktree'
+  push_url=$(git remote get-url --push --all "$remote")
+  # Reject non-GitHub and multiple push destinations, including the Gitea origin.
+  [[ $push_url =~ ^(git@github\.com:|https://github\.com/|ssh://git@github\.com/)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+    fail 'RELEASE_REMOTE must have exactly one public GitHub push URL'
+  tags=$(git tag --list "$version")
+  [[ -z $tags ]] || fail "Git tag $version already exists locally"
+  if git ls-remote --exit-code --tags "$push_url" "refs/tags/$version" >/dev/null; then
+    fail "Git tag $version already exists on $remote"
+  else
+    result=$?
+    [[ $result == 2 ]] || fail "unable to check tags on $remote"
+  fi
 }
 
-case "$action" in
-check)
-	preflight
-	;;
-publish)
-	preflight
-	if [ "$publish" != 1 ]; then
-		printf '%s\n' "Preflight complete. Refusing to tag or publish without PUBLISH=1."
-		printf '%s\n' "When ready, run: make publish VERSION=$version PUBLISH=1"
-		exit 1
-	fi
+publish() (
+  preflight
+  [[ ${PUBLISH:-0} == 1 ]] || fail "preflight complete; use make publish VERSION=$version PUBLISH=1 to sign and push"
+  local commit tag_message_file status
+  commit=$(git rev-parse --verify 'HEAD^{commit}')
+  tag_message_file=$(mktemp)
+  trap 'rm -f -- "$tag_message_file"' EXIT
+  git-cliff --unreleased --tag "$version" > "$tag_message_file"
+  [[ -s $tag_message_file ]] || fail 'git-cliff produced an empty tag message'
+  # Check again after notes generation, immediately before creating the tag.
+  preflight
+  status=$(git status --porcelain)
+  [[ -z $status && $(git rev-parse --verify 'HEAD^{commit}') == "$commit" ]] ||
+    fail 'worktree or HEAD changed while preparing the release'
+  git tag -s --cleanup=verbatim -F "$tag_message_file" "$version" "$commit"
+  git push "$remote" "refs/tags/$version:refs/tags/$version"
+)
 
-	tag_message_file=$(mktemp)
-	trap 'rm -f "$tag_message_file"' EXIT HUP INT TERM
-	git-cliff --unreleased --tag "$version" >"$tag_message_file"
-	git tag -s --cleanup=verbatim "$version" -F "$tag_message_file"
-	git push origin "$version"
-	;;
-*)
-	fail "Usage: $0 {check|publish}"
-	;;
+case ${1:-check} in
+  check) preflight ;;
+  publish) publish ;;
+  *) fail 'usage: publish.sh check|publish' ;;
 esac

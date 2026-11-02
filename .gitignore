@@ -1,4 +1,6 @@
 bin/
+dist/
+__pycache__/
 go.work
 go.work.sum
 third_party/

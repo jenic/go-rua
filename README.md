@@ -170,3 +170,113 @@ never skip that gate. Probe fixtures live under `.gocache-tests`; if the checkou
 is inside a default allowed tree such as `/tmp`, set `RUA_LANDLOCK_TEST_ROOT` to a
 private writable directory outside all default grants so denied-access checks
 remain meaningful.
+
+## CI and releases
+
+GitHub Actions runs Linux amd64 checks for branches and pull requests. Releases
+run the same checks against the tagged commit, then rebuild and validate the
+actual archive executable before signing. Checks include formatting, module
+integrity, vet, unit tests, pinned govulncheck, mandatory Landlock ABI 3+
+enforcement, and an unprivileged Arch fixture build with an isolated pacman
+transaction. Missing sandbox capabilities fail CI rather than skipping a gate.
+
+Builds require Go 1.26.10 and a native C compiler: tree-sitter and all-thread
+Landlock enforcement require CGO. Release executables retain PIE and dynamic
+libc linking. CI builds with Ubuntu 24.04's glibc toolchain and tests the same
+executable in current Arch userspace; no Windows, macOS, or ARM artifacts are
+produced.
+
+```sh
+make test-release
+make release-all VERSION=v1.2.3
+make verify-repro VERSION=v1.2.3
+mkdir -p .gocache/release-check
+# Run after release-all or verify-repro:
+tar -xzf dist/go-rua_linux_amd64.tar.gz -C .gocache/release-check
+make test-release-binary VERSION=v1.2.3 RELEASE_BINARY="$PWD/.gocache/release-check/go-rua"
+# On an Arch host, check the same executable without rebuilding it:
+RELEASE_BINARY="$PWD/.gocache/release-check/go-rua" RUA_REQUIRE_ARCH_TESTS=1 \
+  bash scripts/integration-upgrade.sh
+```
+
+`verify-repro` compares binaries, complete archives, and checksum manifests from
+two builds with independent caches. Reproducibility assumes identical source,
+Go toolchain, C compiler, libc, and build environment. Archives contain `go-rua`
+and `README.md` with normalized permissions and timestamps. Existing signed or
+attested output in `dist` must be moved aside before building a new release.
+
+### Maintainer setup and publishing
+
+Create a public GitHub repository with Actions enabled and add a `github` remote
+pointing to it. Keep the existing Gitea `origin` if desired. Remote configuration,
+commits, and tag pushes are maintainer actions; this change does not perform them.
+Push the reviewed source and make the Linux CI job a required status check
+for the default branch. Protect release tags against unauthorized creation,
+updates, and deletion. Review workflow changes and keep the SHA-pinned actions,
+Cosign version, govulncheck version, and Arch image digest current.
+
+```sh
+make publish-check VERSION=v1.2.3
+make publish VERSION=v1.2.3 PUBLISH=1
+# Override the remote if it has another name:
+make publish VERSION=v1.2.3 RELEASE_REMOTE=release-github PUBLISH=1
+```
+
+Publishing requires a clean worktree, git-cliff, a working local Git signing
+identity, and a GitHub push URL. The command runs checks, creates a signed
+annotated tag with git-cliff's notes, and pushes only that tag. GitHub Actions
+creates the release; no long-lived signing key or release token is needed in CI.
+Tags must be `vMAJOR.MINOR.PATCH`, optionally followed by a SemVer prerelease,
+without build metadata. Prereleases do not become the latest stable release.
+Validate setup with a new prerelease before publishing a stable version.
+
+### Verifying downloads
+
+New releases have exactly five uploaded assets:
+
+- `go-rua_linux_amd64.tar.gz`
+- `SHA256SUMS`
+- `go-rua_linux_amd64.tar.gz.sigstore.json`
+- `SHA256SUMS.sigstore.json`
+- `provenance.sigstore.json`
+
+The archive and manifest each have a keyless Cosign signature using GitHub
+Actions OIDC and public Sigstore. Their identities and digests appear in public
+transparency logs. The provenance bundle has its own Sigstore signature and
+covers exactly those two files with SLSA v1 provenance. This targets SLSA Build
+Level 2, linking the artifacts to their source commit, tag, and release workflow.
+Signature bundles are excluded from `SHA256SUMS`. GitHub-generated source
+archives are outside this signed set; older releases are not backfilled.
+
+Install Cosign v3.0.6 or newer and a current GitHub CLI with attestation support.
+Download all five assets from the same release. Replace the repository and tag
+below with the trusted publisher and release you intend to verify:
+
+```sh
+repo=OWNER/go-rua
+tag=v1.2.3
+asset=go-rua_linux_amd64.tar.gz
+identity="https://github.com/$repo/.github/workflows/release.yml@refs/tags/$tag"
+issuer=https://token.actions.githubusercontent.com
+
+for file in "$asset" SHA256SUMS; do
+  cosign verify-blob --bundle "$file.sigstore.json" \
+    --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$file"
+  gh attestation verify "$file" --bundle provenance.sigstore.json \
+    --repo "$repo" --cert-identity "$identity" --cert-oidc-issuer "$issuer" \
+    --predicate-type https://slsa.dev/provenance/v1 \
+    --source-ref "refs/tags/$tag" --deny-self-hosted-runners
+done
+sha256sum --check --strict SHA256SUMS
+```
+
+Stop if any verification fails. If you independently know the expected source
+commit, add `--source-digest <trusted-commit-sha>` to the attestation command.
+CI always requires that commit and checks the entire provenance subject set.
+Publication uploads to a draft, downloads and verifies every asset, compares
+bytes, and rechecks the remote tag before publishing. Failed drafts can be
+retried by rerunning the workflow; already-published releases are never replaced.
+
+See [GitHub artifact attestations](https://docs.github.com/en/actions/concepts/security/artifact-attestations),
+[GitHub CLI verification](https://cli.github.com/manual/gh_attestation_verify), and
+[Sigstore signature verification](https://docs.sigstore.dev/cosign/verifying/verify/).
