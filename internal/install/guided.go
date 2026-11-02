@@ -18,7 +18,6 @@ import (
 	"go-rua/internal/recipeaudit"
 	"go-rua/internal/review"
 	"go-rua/internal/reviewstate"
-	"go-rua/internal/sandbox"
 	"go-rua/internal/shellutil"
 	"go-rua/internal/tarcheck"
 	"golang.org/x/sys/unix"
@@ -594,9 +593,7 @@ func guidedLint(target string, artifact bool) review.Report {
 			}
 			continue
 		}
-		args := []string{name, file}
-		cfg := sandbox.Config{RO: []string{"/etc", filepath.Dir(file)}, ROX: []string{"/usr", "/bin", "/lib", "/lib64"}}
-		out, _, err := sandbox.RunCapture(cfg, args)
+		out, err := shellutil.NamcapDiagnostics(file)
 		if out != "" {
 			r.Add("tool-diagnostics", review.Review, name, out)
 		}

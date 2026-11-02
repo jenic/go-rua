@@ -258,7 +258,7 @@ var namcapHelp = commandHelpSpec{
 	Summary: "Run namcap against a PKGBUILD in a sandbox.",
 	Usage:   "go-rua namcap [file|directory]",
 	Description: []string{
-		"Run namcap with read-only access to the selected PKGBUILD directory and system tools.",
+		"Run namcap with read-only access to the selected PKGBUILD directory, system tools, and pacman database.",
 	},
 	Arguments: []helpEntry{
 		{Label: "file|directory", Description: "PKGBUILD file or directory containing PKGBUILD (default: current directory)"},

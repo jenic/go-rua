@@ -17,7 +17,7 @@ unavailable() {
   echo "SKIP: $*"
   exit 0
 }
-for tool in makepkg pacman vercmp bwrap unshare sha256sum; do
+for tool in makepkg pacman vercmp namcap bwrap unshare sha256sum; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     unavailable "integration-upgrade requires $tool on an Arch host"
   fi
@@ -67,6 +67,8 @@ package() {
 }
 RECIPE
 printf "sha256sums=('%s')\n" "$fixture_hash" >> "$fixture_dir/recipe/PKGBUILD"
+stage 'lint fixture recipe with namcap'
+"$binary" namcap "$fixture_dir/recipe"
 stage 'build fixture package'
 "$binary" builddir "$fixture_dir/recipe"
 stage 'locate package archive'
@@ -86,6 +88,8 @@ if [[ ! -f $fixture_archive || -L $fixture_archive ]]; then
   exit 1
 fi
 printf '[arch] using archive: %s\n' "$fixture_archive"
+stage 'lint fixture package with namcap'
+"$binary" namcap "$fixture_archive"
 stage 'review package archive'
 printf 'o\n' | "$binary" tarcheck "$fixture_archive"
 stage 'install into isolated pacman root'

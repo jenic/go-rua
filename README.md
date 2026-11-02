@@ -11,6 +11,7 @@ A lightweight reimplementation of RUA (AUR helper) in Go, sandboxed with Landloc
 - **shellcheck:** Run shellcheck for a PKGBUILD in a sandbox.
   - Uses a wrapper to set PKGBUILD-specific variables to reduce false positives.
 - **namcap:** Run namcap for a PKGBUILD in a sandbox.
+  - Standalone and guided upgrade checks read `/var/lib/pacman` for libalpm dependency analysis.
 - **install:** Clone AUR repos, review, build, stage, and install by default.
   - Flags: `--online`, `--offline` (default), `--force`, `--stage-only`, `--asdeps`, `--plan`, `--install-repo-deps`, `--no-seccomp`.
   - Review warns about source URLs with Unicode/IDN hostname spoofing risks and suspicious shell logic; interactive installs require acknowledgement before continuing.
@@ -103,8 +104,9 @@ artifacts remain available for diagnosis. Concurrent guided sessions are exclude
 by a private session lock.
 
 Run `make test` for deterministic workflow and archive fixtures. On an Arch host,
-`make integration-upgrade` exercises a real sandboxed fixture build, archive
-inspection, and a pacman transaction in a temporary root using a user namespace.
+`make integration-upgrade` exercises sandboxed namcap checks on a recipe and its
+built package, a real sandboxed fixture build, archive inspection, and a pacman
+transaction in a temporary root using a user namespace.
 The transaction uses a fixture-only pacman configuration, cache, keyring, and
 hook directory. It omits the host's `DownloadUser`, whose UID is unavailable in
 the single-user namespace, and permits the unsigned local fixture package.

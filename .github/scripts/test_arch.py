@@ -32,7 +32,7 @@ class ArchPrerequisiteTests(unittest.TestCase):
         return result.stdout + result.stderr
 
     def prerequisites(self):
-        for tool in ['makepkg', 'pacman', 'vercmp', 'bwrap', 'unshare', 'sha256sum']:
+        for tool in ['makepkg', 'pacman', 'vercmp', 'namcap', 'bwrap', 'unshare', 'sha256sum']:
             self.fake(tool, 'exit 0')
 
     def test_missing_tools_skip_only_in_optional_mode(self):
@@ -71,6 +71,13 @@ if [[ $1 != true ]]; then exec "$@"; fi
         # Simulate only package creation/installation, not sandbox enforcement.
         self.fake('candidate', '''
 case $1 in
+  namcap)
+    if [[ ${FAIL_NAMCAP:-0} == 1 ]]; then
+      echo 'alpm.error: could not open database' >&2
+      exit 17
+    fi
+    printf '%s\n' "$2" >> "$FIXTURE/linted-targets"
+    ;;
   builddir)
     read -r -a extensions <<< "${ARCHIVE_EXTENSIONS-.pkg.tar.zst}"
     for extension in "${extensions[@]}"; do
@@ -131,7 +138,19 @@ fi
                 reviewed = (self.root / 'reviewed-archive').read_text()
                 self.assertTrue(reviewed.endswith(extension), reviewed)
                 self.assertEqual((self.root / 'installed-archive').read_text(), reviewed)
+                targets = (self.root / 'linted-targets').read_text().splitlines()
+                self.assertTrue(targets[-2].endswith('/recipe'), targets)
+                self.assertEqual(targets[-1], reviewed)
                 self.assertIn('PASS:', output)
+
+    def test_namcap_database_failure_is_a_required_gate(self):
+        binary = self.package_fixture_tools()
+        output = self.run_script(False, RELEASE_BINARY=binary, FAIL_NAMCAP='1')
+        self.assertIn('lint fixture recipe with namcap', output)
+        self.assertIn('could not open database', output)
+        self.assertIn('exit 17', output)
+        self.assertNotIn('build fixture package', output)
+        self.assertNotIn('PASS:', output)
 
     def test_missing_or_multiple_archives_have_actionable_errors(self):
         binary = self.package_fixture_tools()
