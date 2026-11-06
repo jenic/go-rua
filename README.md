@@ -23,6 +23,35 @@ A lightweight reimplementation of RUA (AUR helper) in Go, sandboxed with Landloc
   - Flags include `--upstream` for explicit verified GitHub overrides and `--validate-all-arches` for complete architecture validation.
 - **upstream:** Inspect configured or discovered GitHub candidates as text or JSON and manage bounded verification evidence.
 
+## Searching
+
+Search terms are case-insensitive and combined with AND. Plain keywords match
+substrings in package names or descriptions. A leading `^` anchors the start of
+a package name, and a trailing `$` anchors its end. With both, the name must
+match exactly. Patterns containing `*` match the whole package name, with each
+`*` standing for any sequence of characters, including none.
+
+```sh
+go-rua search '^python'             # names starting with python
+go-rua search '-git$'               # names ending with -git
+go-rua search '^python' '-git$'     # both conditions
+go-rua search '^python$'            # exact name
+go-rua search 'python*'             # wildcard prefix
+go-rua search '*-git'               # wildcard suffix
+go-rua search 'python*-git'         # wildcard prefix and suffix
+go-rua search '^python' terminal    # name prefix and keyword in name/description
+```
+
+Quote patterns to prevent shell expansion. Only `*`, a leading `^`, and a
+trailing `$` have special meaning; other punctuation such as `.` and `+` is
+literal. Anchored and wildcard terms match names only. Suffix patterns such as
+`-git$` work directly; use `--` before other terms that begin with a dash.
+
+At least one term must contain two consecutive literal characters to query
+the AUR. A shorter pattern can be combined with another, longer term.
+API errors, including queries that return too many candidates, are reported
+instead of appearing as empty results; add a more specific term if needed.
+
 ## Dependency Planning and Summaries
 
 - AUR info includes Depends/MakeDepends/CheckDepends fields.

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -196,6 +197,50 @@ func TestMainProcessSearchColor(t *testing.T) {
 	}
 }
 
+func TestMainProcessSearchPatterns(t *testing.T) {
+	const pythonGit = "python-foo-git 1 - Terminal tools\n"
+	const pythonBar = "python-bar 1 - Libraries\n"
+	const otherGit = "other-git 1 - Python tools\n"
+	const description = "description-only 1 - Python terminal -git\n"
+	tests := []struct {
+		name     string
+		terms    []string
+		want     string
+		wantCode int
+		wantErr  string
+	}{
+		{name: "prefix anchor", terms: []string{"^python"}, want: pythonGit + pythonBar},
+		{name: "suffix anchor first", terms: []string{"-git$"}, want: pythonGit + otherGit},
+		{name: "combined anchors", terms: []string{"^python", "-git$"}, want: pythonGit},
+		{name: "suffix then prefix", terms: []string{"-git$", "^python"}, want: pythonGit},
+		{name: "exact name", terms: []string{"^python-bar$"}, want: pythonBar},
+		{name: "wildcard prefix", terms: []string{"python*"}, want: pythonGit + pythonBar},
+		{name: "wildcard suffix", terms: []string{"*-git"}, want: pythonGit + otherGit},
+		{name: "wildcard prefix and suffix", terms: []string{"python*-git"}, want: pythonGit},
+		{name: "mixed plain term and anchor", terms: []string{"^python", "terminal"}, want: pythonGit},
+		{name: "plain keyword", terms: []string{"python"}, want: pythonGit + pythonBar + otherGit + description},
+		{name: "explicit flag separator", terms: []string{"--", "-git$"}, want: pythonGit + otherGit},
+		{name: "wildcard without literal", terms: []string{"*"}, wantCode: 1, wantErr: "at least two consecutive literal characters"},
+		{name: "empty term", terms: []string{""}, wantCode: 1, wantErr: "search terms must not be empty"},
+		{name: "unknown option remains an error", terms: []string{"--unknown"}, wantCode: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := append([]string{"search", "--color=never"}, tt.terms...)
+			stdout, stderr, code := runMainProcess(t, "main-search-patterns", "", args...)
+			if code != tt.wantCode {
+				t.Fatalf("exit code = %d, want %d; stdout = %q, stderr = %q", code, tt.wantCode, stdout, stderr)
+			}
+			if tt.wantCode == 0 && (stdout != tt.want || stderr != "") {
+				t.Errorf("stdout = %q, stderr = %q; want stdout %q, empty stderr", stdout, stderr, tt.want)
+			}
+			if tt.wantErr != "" && !strings.Contains(stderr, tt.wantErr) {
+				t.Errorf("stderr = %q, want %q", stderr, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestMainProcessColorFlagRejectsInvalidValues(t *testing.T) {
 	tests := []struct {
 		name string
@@ -346,6 +391,17 @@ func TestMainProcessHelper(t *testing.T) {
 			}
 			return []aur.Package{{Name: "foo", Version: "1.2-3", Description: " hello "}}, nil
 		}
+		main()
+		os.Exit(0)
+	case "main-search-patterns":
+		aur.SetHTTPClientForTests(&http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+			return mockResp(200, `{"version":5,"type":"search","resultcount":4,"results":[
+				{"Name":"python-foo-git","Version":"1","Description":"Terminal tools"},
+				{"Name":"python-bar","Version":"1","Description":"Libraries"},
+				{"Name":"other-git","Version":"1","Description":"Python tools"},
+				{"Name":"description-only","Version":"1","Description":"Python terminal -git"}
+			]}`), nil
+		})})
 		main()
 		os.Exit(0)
 	case "fatalf":

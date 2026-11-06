@@ -382,6 +382,22 @@ func searchCmd(args []string) {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
 	setCommandUsage(fs, searchHelp)
+	// A suffix pattern such as -git$ is a term, even before any other terms.
+	// Keep ordinary unknown options as errors and preserve an explicit --.
+	for i, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && (strings.HasSuffix(arg, "$") || strings.Contains(arg, "*")) {
+			withSeparator := append([]string{}, args[:i]...)
+			withSeparator = append(withSeparator, "--")
+			args = append(withSeparator, args[i:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			break // flag.Parse stops at the first positional argument, too.
+		}
+	}
 	if !parseCommandFlags(fs, args) {
 		return
 	}

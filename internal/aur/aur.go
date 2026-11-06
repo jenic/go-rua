@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const base = "https://aur.archlinux.org/rpc/?v=5"
@@ -34,6 +35,7 @@ type rpcResponse struct {
 	Type        string    `json:"type"`
 	ResultCount int       `json:"resultcount"`
 	Results     []Package `json:"results"`
+	Error       string    `json:"error"`
 }
 
 var httpClient = &http.Client{Timeout: 20 * time.Second}
@@ -41,16 +43,14 @@ var httpClient = &http.Client{Timeout: 20 * time.Second}
 func Search(terms []string) ([]Package, error) {
 	// Legacy OR search across terms (kept for compatibility if needed elsewhere)
 	seen := map[string]Package{}
-	for _, by := range []string{"name", "desc"} {
-		for _, t := range terms {
-			u := fmt.Sprintf("%s&type=search&by=%s&arg=%s", base, by, url.QueryEscape(t))
-			var resp rpcResponse
-			if err := getJSON(u, &resp); err != nil {
-				return nil, err
-			}
-			for _, p := range resp.Results {
-				seen[p.Name] = p
-			}
+	for _, t := range terms {
+		u := fmt.Sprintf("%s&type=search&by=name-desc&arg=%s", base, url.QueryEscape(t))
+		var resp rpcResponse
+		if err := getJSON(u, &resp); err != nil {
+			return nil, err
+		}
+		for _, p := range resp.Results {
+			seen[p.Name] = p
 		}
 	}
 	out := make([]Package, 0, len(seen))
@@ -60,41 +60,46 @@ func Search(terms []string) ([]Package, error) {
 	return out, nil
 }
 
-// SearchAND performs AUR search that requires all keywords to match
-// either in name or description. It queries by the longest keyword and
-// then filters locally for the rest.
+// SearchAND requires every term to match, ignoring case. Plain terms match
+// substrings in names or descriptions; terms with *, a leading ^, or a trailing $
+// match package names only. It queries by the longest literal substring and
+// applies patterns locally, since the RPC API only supports substring searches.
 func SearchAND(terms []string) ([]Package, error) {
 	if len(terms) == 0 {
 		return nil, nil
 	}
-	// pick the longest term as the initial query
-	longest := terms[0]
-	for _, t := range terms[1:] {
-		if len(t) > len(longest) {
-			longest = t
-		}
-	}
-	// get initial candidate set
-	seen := map[string]Package{}
-	for _, by := range []string{"name", "desc"} {
-		u := fmt.Sprintf("%s&type=search&by=%s&arg=%s", base, by, url.QueryEscape(longest))
-		var resp rpcResponse
-		if err := getJSON(u, &resp); err != nil {
+	matchers := make([]searchTerm, 0, len(terms))
+	var longest string
+	by := "name-desc"
+	for _, t := range terms {
+		matcher, err := parseSearchTerm(t)
+		if err != nil {
 			return nil, err
 		}
-		for _, p := range resp.Results {
-			seen[p.Name] = p
+		matchers = append(matchers, matcher)
+		if utf8.RuneCountInString(matcher.literal) > utf8.RuneCountInString(longest) {
+			longest = matcher.literal
+			by = "name-desc"
+			if matcher.pattern != nil {
+				by = "name"
+			}
 		}
 	}
-	// filter: every term must match name or description (case-insensitive)
+	if utf8.RuneCountInString(longest) < 2 {
+		return nil, fmt.Errorf("search requires at least two consecutive literal characters in one term")
+	}
+	u := fmt.Sprintf("%s&type=search&by=%s&arg=%s", base, by, url.QueryEscape(longest))
+	var resp rpcResponse
+	if err := getJSON(u, &resp); err != nil {
+		return nil, err
+	}
 	out := []Package{}
-	for _, p := range seen {
+	for _, p := range resp.Results {
 		name := strings.ToLower(p.Name)
 		desc := strings.ToLower(p.Description)
 		ok := true
-		for _, t := range terms {
-			lt := strings.ToLower(t)
-			if !strings.Contains(name, lt) && !strings.Contains(desc, lt) {
+		for _, matcher := range matchers {
+			if !matcher.matches(name, desc) {
 				ok = false
 				break
 			}
@@ -133,7 +138,7 @@ func joinMulti(key string, vals []string) string {
 	return v.Encode()
 }
 
-func getJSON(u string, v any) error {
+func getJSON(u string, v *rpcResponse) error {
 	req, _ := http.NewRequest("GET", u, nil)
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -144,5 +149,15 @@ func getJSON(u string, v any) error {
 		return fmt.Errorf("AUR RPC HTTP %d", resp.StatusCode)
 	}
 	dec := json.NewDecoder(resp.Body)
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if v.Type == "error" || v.Error != "" {
+		message := v.Error
+		if message == "" {
+			message = "unspecified error"
+		}
+		return fmt.Errorf("aur rpc: %s", message)
+	}
+	return nil
 }

@@ -22,7 +22,7 @@ func TestCommandHelpIsCompleteAndConsistent(t *testing.T) {
 		{topic: "shellcheck", run: shellcheckCmd, wantArguments: true, wantText: []string{"Requirements:", "standard input"}},
 		{topic: "namcap", run: namcapCmd, wantArguments: true, wantText: []string{"Requirements:", "current directory"}},
 		{topic: "install", run: installCmd, wantArguments: true, wantFlags: []string{"--asdeps", "--force", "--install-repo-deps", "--no-seccomp", "--offline", "--online", "--plan", "--stage-only"}, wantText: []string{"Workflow:", "Review controls:", "Paths:", "Safety:", "pacman -U"}},
-		{topic: "search", run: searchCmd, wantArguments: true, wantText: []string{"AND semantics"}},
+		{topic: "search", run: searchCmd, wantArguments: true, wantText: []string{"AND semantics", "Patterns match package names", "'^python'", "'-git$'", "'python*-git'"}},
 		{topic: "info", run: infoCmd, wantArguments: true, wantFlags: []string{"--json"}, wantText: []string{"formatted JSON"}},
 		{topic: "tarcheck", run: tarcheckCmd, wantArguments: true, wantText: []string{"Review controls:", "O / Q"}},
 		{topic: "upgrade", run: upgradeCmd, wantFlags: []string{"--devel", "--force", "--ignore <packages>", "--install-repo-deps", "--no-seccomp", "--no-upstream-check", "--offline", "--online", "--plan", "--printonly", "--upstream", "--validate-all-arches"}, wantText: []string{"Modes:", "Upstream overrides:", ".sha256.asc", "Exit status:", "status 7", "privileged", "ephemeral"}},

@@ -17,6 +17,9 @@ func mockResp2(status int, body string) *http.Response {
 
 func TestSearchLegacyOR(t *testing.T) {
 	t.Cleanup(SetHTTPClientForTests(&http.Client{Transport: rtFunc2(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Query().Get("by") != "name-desc" {
+			t.Errorf("search must use the supported name-desc field: %s", r.URL)
+		}
 		return mockResp2(200, `{"version":5,"type":"search","resultcount":1,"results":[{"Name":"foo","Version":"1","Description":"foo"}]}`), nil
 	})}))
 	got, err := Search([]string{"foo", "bar"})

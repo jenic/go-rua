@@ -321,12 +321,18 @@ var searchHelp = commandHelpSpec{
 	Usage:   "go-rua search <keyword>...",
 	Description: []string{
 		"Query the AUR RPC API and print matching package names, versions, and descriptions. Every supplied keyword must match.",
+		"Plain keywords match substrings in names or descriptions. Patterns match package names only: use a leading ^ for starts-with, a trailing $ for ends-with, or both for an exact name. Use * to match any sequence of characters across a whole name. Matching is case-insensitive.",
+		"Quote patterns to protect them from shell expansion. Only *, leading ^, and trailing $ are special; other punctuation is literal. At least one term must contain two consecutive literal characters. Use -- before other terms that start with a dash.",
 	},
 	Arguments: []helpEntry{
 		{Label: "keyword...", Description: "One or more case-insensitive search terms combined with AND semantics"},
 	},
 	Examples: []helpExample{
 		{Description: "Search for packages matching both terms:", Command: "go-rua search terminal emulator"},
+		{Description: "Find names starting with python:", Command: "go-rua search '^python'"},
+		{Description: "Find names ending with -git:", Command: "go-rua search '-git$'"},
+		{Description: "Combine prefix and suffix requirements:", Command: "go-rua search '^python' '-git$'"},
+		{Description: "Use a wildcard for the same prefix and suffix:", Command: "go-rua search 'python*-git'"},
 	},
 }
 
