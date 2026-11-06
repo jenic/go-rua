@@ -17,6 +17,7 @@ import (
 	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
 	"go-rua/internal/review"
+	"go-rua/internal/term"
 	"go-rua/internal/upstream"
 )
 
@@ -586,6 +587,12 @@ func TestUpgradeCmdUpstreamFailureIsUnknownAndKeepsAURPlan(t *testing.T) {
 }
 
 func TestUpgradePreviewConfirmation(t *testing.T) {
+	// Keep text assertions independent of the caller's terminal color settings.
+	// Restore the environment before recomputing color state during cleanup.
+	t.Cleanup(term.Recompute)
+	t.Setenv("RUA_COLOR", "never")
+	term.Recompute()
+
 	for _, command := range []string{"upgrade", "update"} {
 		for _, tt := range []struct {
 			name    string
