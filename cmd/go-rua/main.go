@@ -529,9 +529,13 @@ func upgradeCmd(args []string) {
 	if *validateAllArches && !*useUpstream {
 		fatalf("--validate-all-arches requires --upstream")
 	}
-	outdated, nonexistent, err := findOutdated(*devel, *ignore)
+	items, nonexistent, err := listOutdatedDetailed(*devel, *ignore)
 	if err != nil {
 		fatalf("upgrade check failed: %v", err)
+	}
+	var outdated []string
+	for _, item := range items {
+		outdated = append(outdated, item.Name)
 	}
 	if *printOnly {
 		if len(outdated) == 0 && len(nonexistent) == 0 {
@@ -598,83 +602,86 @@ func upgradeCmd(args []string) {
 		osExitFn(7)
 		return
 	}
-	if *plan {
-		// Detailed outdated table
-		items, _, _ := listOutdatedDetailed(*devel, *ignore)
-		if len(items) > 0 {
-			fmt.Println(term.Bold("Outdated AUR packages:"))
-			for _, it := range items {
-				fmt.Printf("  %s  %s -> %s\n", it.Name, it.Local, it.Latest)
+	if len(items) > 0 {
+		fmt.Println(term.Bold("Outdated AUR packages:"))
+		for _, it := range items {
+			fmt.Printf("  %s  %s -> %s", it.Name, it.Local, it.Latest)
+			if *devel && isDevelPkg(it.Name) {
+				fmt.Print(" (development rebuild)")
 			}
+			fmt.Println()
 		}
-		if !*noUpstreamCheck {
-			printUpstreamReports(reports)
+	}
+	if (*plan || *useUpstream) && !*noUpstreamCheck {
+		printUpstreamReports(reports)
+	}
+	if *useUpstream && len(eligibilityPlans) > 0 {
+		fmt.Println(term.Bold("Eligible upstream overrides:"))
+		var names []string
+		for name := range eligibilityPlans {
+			names = append(names, name)
 		}
-		if *useUpstream && len(eligibilityPlans) > 0 {
-			fmt.Println(term.Bold("Eligible upstream overrides:"))
-			var names []string
-			for name := range eligibilityPlans {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-			for _, name := range names {
-				overridePlan := eligibilityPlans[name]
-				fmt.Printf("  %s: pkgver %s -> %s; pkgrel -> 1\n", name, overridePlan.FromVersion, overridePlan.ToVersion)
-				for _, mapping := range overridePlan.Mappings {
-					if mapping.Kind == "git" {
-						fmt.Printf("    %s[%d] -> immutable Git commit %s; %s[%d] remains SKIP\n", mapping.SourceKey, mapping.Index, mapping.GitReference.CommitSHA, mapping.ChecksumKey, mapping.Index)
-					} else {
-						fmt.Printf("    %s[%d] -> %s; %s[%d] -> downloaded SHA-256\n", mapping.SourceKey, mapping.Index, mapping.Asset.Name, mapping.ChecksumKey, mapping.Index)
-					}
+		sort.Strings(names)
+		for _, name := range names {
+			overridePlan := eligibilityPlans[name]
+			request := eligible[name]
+			fmt.Printf("  %s  %s -> %s (upstream; pkgver %s -> %s; pkgrel -> 1)\n", name, request.LocalVersion, request.Candidate.FullVersion, overridePlan.FromVersion, overridePlan.ToVersion)
+			for _, mapping := range overridePlan.Mappings {
+				if mapping.Kind == "git" {
+					fmt.Printf("    %s[%d] -> immutable Git commit %s; %s[%d] remains SKIP\n", mapping.SourceKey, mapping.Index, mapping.GitReference.CommitSHA, mapping.ChecksumKey, mapping.Index)
+				} else {
+					fmt.Printf("    %s[%d] -> %s; %s[%d] -> downloaded SHA-256\n", mapping.SourceKey, mapping.Index, mapping.Asset.Name, mapping.ChecksumKey, mapping.Index)
 				}
 			}
 		}
-		if *useUpstream && len(ineligibleReasons) > 0 {
-			fmt.Println(term.Bold("Ineligible upstream candidates:"))
-			var names []string
-			for name := range ineligibleReasons {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-			for _, name := range names {
-				fmt.Printf("  %s: %s\n", name, ineligibleReasons[name])
-			}
+	}
+	if *useUpstream && len(ineligibleReasons) > 0 {
+		fmt.Println(term.Bold("Ineligible upstream candidates:"))
+		var names []string
+		for name := range ineligibleReasons {
+			names = append(names, name)
 		}
-		targets := mergeUpgradeTargets(outdated, eligible)
-		pl, err := installPlanFn(targets)
-		if err != nil {
-			fatalf("plan failed: %v", err)
+		sort.Strings(names)
+		for _, name := range names {
+			fmt.Printf("  %s: %s\n", name, ineligibleReasons[name])
 		}
-		fmt.Println(term.Bold("Plan:"))
-		if len(pl.BuildOrder) == 0 {
-			fmt.Println("  (no AUR builds needed)")
-		} else {
-			fmt.Printf("  Build order: %s\n", strings.Join(pl.BuildOrder, ", "))
-		}
-		if len(pl.RepoMissing) > 0 {
-			fmt.Printf("  %s %s\n", term.Yellow("Repo deps missing:"), strings.Join(pl.RepoMissing, ", "))
-			fmt.Printf("    Install: %s pacman -S --needed %s\n", pacmanSudoFn(), strings.Join(pl.RepoMissing, " "))
-		} else {
-			fmt.Println("  Repo deps missing: none")
-		}
-		if len(pl.Unknown) > 0 {
-			fmt.Printf("  Unknown deps: %s\n", strings.Join(pl.Unknown, ", "))
-		}
+	}
+	targets := mergeUpgradeTargets(outdated, eligible)
+	if len(targets) == 0 && !*plan {
 		printNonexistentPackages(nonexistent)
 		return
 	}
+	pl, err := installPlanFn(targets)
+	if err != nil {
+		fatalf("plan failed: %v", err)
+	}
+	fmt.Println(term.Bold("Plan:"))
+	if len(pl.BuildOrder) == 0 {
+		fmt.Println("  (no AUR builds needed)")
+	} else {
+		fmt.Printf("  Build order: %s\n", strings.Join(pl.BuildOrder, ", "))
+	}
+	if len(pl.RepoMissing) > 0 {
+		fmt.Printf("  %s %s\n", term.Yellow("Repo deps missing:"), strings.Join(pl.RepoMissing, ", "))
+		fmt.Printf("    Install: %s pacman -S --needed %s\n", pacmanSudoFn(), strings.Join(pl.RepoMissing, " "))
+	} else {
+		fmt.Println("  Repo deps missing: none")
+	}
+	if len(pl.Unknown) > 0 {
+		fmt.Printf("  Unknown deps: %s\n", strings.Join(pl.Unknown, ", "))
+	}
 	printNonexistentPackages(nonexistent)
-	targets := mergeUpgradeTargets(outdated, eligible)
-	if len(targets) == 0 {
+	if *plan {
 		return
 	}
 	if *useUpstream {
 		fmt.Fprintln(os.Stderr, "Warning: --upstream is an explicit trust decision that builds a GitHub release or immutable Git tag target newer than the reviewed AUR recipe. Review the generated diff and verification evidence before approving it.")
 	}
-	// Build and install in order by default.
-	pl, err := installPlanFn(targets)
-	if err != nil {
-		fatalf("plan failed: %v", err)
+	fmt.Print("Proceed with upgrade? [y/N] ")
+	answer, err := review.Answer(os.Stdin)
+	if err != nil || (answer != "y" && answer != "yes") {
+		fmt.Println("Upgrade cancelled.")
+		return
 	}
 	if *installRepoDeps && len(pl.RepoMissing) > 0 {
 		fmt.Printf("Installing missing repo deps: %s\n", strings.Join(pl.RepoMissing, ", "))

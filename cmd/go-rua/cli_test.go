@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	installpkg "go-rua/internal/install"
 	"go-rua/internal/pacman"
 	"go-rua/internal/paths"
+	"go-rua/internal/review"
 	"go-rua/internal/upstream"
 )
 
@@ -38,6 +40,27 @@ func captureOut(f func()) (string, string) {
 	b1, _ := io.ReadAll(r1)
 	b2, _ := io.ReadAll(r2)
 	return string(b1), string(b2)
+}
+
+func setCLIInput(t *testing.T, input string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = old
+		r.Close()
+	})
+	if _, err := io.WriteString(w, input); err != nil {
+		w.Close()
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func restoreCLISeams(t *testing.T) {
@@ -392,6 +415,7 @@ func TestUpstreamCmdJSONStatus(t *testing.T) {
 
 func TestUpgradeCmdUpstreamAddsCandidateAndBuildCopyHook(t *testing.T) {
 	restoreCLISeams(t)
+	setCLIInput(t, "yes\n")
 	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
 		return []pacman.ForeignPkg{{Name: "app-bin", Version: "1.0-1"}}, nil
 	}
@@ -421,7 +445,12 @@ func TestUpgradeCmdUpstreamAddsCandidateAndBuildCopyHook(t *testing.T) {
 		called = len(names) == 1 && names[0] == "app-bin" && options.InstallBuilt && options.PrepareBuildCopy != nil
 		return nil
 	}
-	_, stderr := captureOut(func() { upgradeCmd([]string{"--upstream"}) })
+	out, stderr := captureOut(func() { upgradeCmd([]string{"--upstream"}) })
+	for _, want := range []string{"Eligible upstream overrides:", "app-bin  1.0-1 -> 1.1-1", "Build order: app-bin", "Proceed with upgrade? [y/N]"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("upstream preview missing %q: %s", want, out)
+		}
+	}
 	if !called || !strings.Contains(stderr, "explicit trust decision") && !strings.Contains(stderr, "downloads and builds") {
 		t.Fatalf("upstream workflow not selected: called=%v stderr=%q", called, stderr)
 	}
@@ -556,8 +585,140 @@ func TestUpgradeCmdUpstreamFailureIsUnknownAndKeepsAURPlan(t *testing.T) {
 	}
 }
 
+func TestUpgradePreviewConfirmation(t *testing.T) {
+	for _, command := range []string{"upgrade", "update"} {
+		for _, tt := range []struct {
+			name    string
+			input   string
+			proceed bool
+		}{
+			{name: "yes", input: "yes\na\n", proceed: true},
+			{name: "short yes", input: "y\na\n", proceed: true},
+			{name: "case and whitespace", input: " YES \na\n", proceed: true},
+			{name: "no", input: "n\n"},
+			{name: "empty", input: "\n"},
+			{name: "EOF"},
+			{name: "EOF after partial yes", input: "yes"},
+			{name: "invalid", input: "maybe\n"},
+		} {
+			t.Run(command+"/"+tt.name, func(t *testing.T) {
+				restoreCLISeams(t)
+				setCLIInput(t, tt.input)
+				oldArgs := os.Args
+				t.Cleanup(func() { os.Args = oldArgs })
+				os.Args = []string{"go-rua", command, "--install-repo-deps"}
+				foreignCalls, infoCalls, planCalls := 0, 0, 0
+				getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
+					foreignCalls++
+					return []pacman.ForeignPkg{{Name: "foo", Version: "1-1"}}, nil
+				}
+				aurInfoFn = func([]string) ([]aur.Package, error) {
+					infoCalls++
+					return []aur.Package{{Name: "foo", Version: "2-1"}}, nil
+				}
+				vercmpFn = func(string, string) (int, error) { return -1, nil }
+				getIgnoredPkgsFn = func() ([]string, error) { return nil, nil }
+				wantPlan := installpkg.Plan{Targets: []string{"foo"}, BuildOrder: []string{"dep", "foo"}, RepoMissing: []string{"libx"}, Unknown: []string{"virtual-dep"}}
+				installPlanFn = func(targets []string) (installpkg.Plan, error) {
+					planCalls++
+					if !reflect.DeepEqual(targets, wantPlan.Targets) {
+						t.Fatalf("plan targets = %v", targets)
+					}
+					return wantPlan, nil
+				}
+				pacmanSudoFn = func() string { return "sudo" }
+				var actions []string
+				pacmanInstallRepoDepsFn = func(names []string) error {
+					if !reflect.DeepEqual(names, wantPlan.RepoMissing) {
+						t.Fatalf("repo dependencies = %v", names)
+					}
+					actions = append(actions, "repo deps")
+					return nil
+				}
+				pathsInitFn = func() paths.Paths {
+					actions = append(actions, "paths")
+					return paths.Paths{}
+				}
+				installInstallFn = func(targets []string, _ paths.Paths, options installpkg.Options) error {
+					actions = append(actions, "install")
+					if !reflect.DeepEqual(targets, wantPlan.Targets) || options.Plan == nil || !reflect.DeepEqual(*options.Plan, wantPlan) {
+						t.Fatalf("installed plan differs from preview: %v %+v", targets, options.Plan)
+					}
+					answer, err := review.Answer(os.Stdin)
+					if err != nil || answer != "a" {
+						t.Fatalf("confirmation consumed later review input: %q, %v", answer, err)
+					}
+					return nil
+				}
+				out, _ := captureOut(main)
+				prompt := "Proceed with upgrade? [y/N]"
+				promptIndex := strings.Index(out, prompt)
+				if promptIndex < 0 {
+					t.Fatalf("confirmation missing: %s", out)
+				}
+				for _, want := range []string{"Outdated AUR packages:", "foo  1-1 -> 2-1", "Build order: dep, foo", "Repo deps missing: libx", "Unknown deps: virtual-dep"} {
+					if index := strings.Index(out, want); index < 0 || index >= promptIndex {
+						t.Errorf("preview must show %q before confirmation: %s", want, out)
+					}
+				}
+				if foreignCalls != 1 || infoCalls != 1 || planCalls != 1 {
+					t.Errorf("preview must reuse discovery and plan: foreign=%d info=%d plan=%d", foreignCalls, infoCalls, planCalls)
+				}
+				if tt.proceed {
+					if !reflect.DeepEqual(actions, []string{"repo deps", "paths", "install"}) || strings.Contains(out, "Upgrade cancelled.") {
+						t.Errorf("approved upgrade actions = %v, output: %s", actions, out)
+					}
+				} else if len(actions) != 0 || !strings.Contains(out, "Upgrade cancelled.") {
+					t.Errorf("cancelled upgrade actions = %v, output: %s", actions, out)
+				}
+			})
+		}
+	}
+}
+
+func TestUpgradePreviewOnlyDoesNotPrompt(t *testing.T) {
+	for _, flag := range []string{"--plan", "--printonly"} {
+		t.Run(flag, func(t *testing.T) {
+			restoreCLISeams(t)
+			setCLIInput(t, "next decision\n")
+			getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
+				return []pacman.ForeignPkg{{Name: "foo", Version: "1"}}, nil
+			}
+			aurInfoFn = func([]string) ([]aur.Package, error) {
+				return []aur.Package{{Name: "foo", Version: "2"}}, nil
+			}
+			vercmpFn = func(string, string) (int, error) { return -1, nil }
+			getIgnoredPkgsFn = func() ([]string, error) { return nil, nil }
+			installPlanFn = func(targets []string) (installpkg.Plan, error) {
+				if flag == "--printonly" {
+					t.Fatal("--printonly must not compute a dependency plan")
+				}
+				return installpkg.Plan{BuildOrder: targets, RepoMissing: []string{"libx"}}, nil
+			}
+			pacmanSudoFn = func() string { return "sudo" }
+			pacmanInstallRepoDepsFn = func([]string) error { t.Fatal("preview installed repo deps"); return nil }
+			pathsInitFn = func() paths.Paths { t.Fatal("preview initialized paths"); return paths.Paths{} }
+			installInstallFn = func([]string, paths.Paths, installpkg.Options) error {
+				t.Fatal("preview installed packages")
+				return nil
+			}
+			out, _ := captureOut(func() { upgradeCmd([]string{flag, "--no-upstream-check", "--install-repo-deps"}) })
+			if strings.Contains(out, "Proceed with upgrade?") || strings.Contains(out, "Upgrade cancelled.") {
+				t.Fatalf("preview prompted: %s", out)
+			}
+			if answer, err := review.Answer(os.Stdin); answer != "next decision" || err != nil {
+				t.Fatalf("preview consumed input: %q, %v", answer, err)
+			}
+			if flag == "--printonly" && out != "foo\n" {
+				t.Fatalf("--printonly output = %q", out)
+			}
+		})
+	}
+}
+
 func TestUpgradeCmdDefaultsToInteractiveInstall(t *testing.T) {
 	restoreCLISeams(t)
+	setCLIInput(t, "y\n")
 
 	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
 		return []pacman.ForeignPkg{{Name: "foo", Version: "1"}}, nil
@@ -589,6 +750,7 @@ func TestUpgradeCmdDefaultsToInteractiveInstall(t *testing.T) {
 
 func TestUpgradeCmdDefaultReportsPackagesMissingFromAUR(t *testing.T) {
 	restoreCLISeams(t)
+	setCLIInput(t, "y\n")
 
 	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
 		return []pacman.ForeignPkg{{Name: "foo", Version: "1"}, {Name: "ghost", Version: "1"}}, nil
@@ -683,6 +845,7 @@ func TestInstallCmdInstallsByDefaultUnlessStageOnly(t *testing.T) {
 
 func TestUpgradeUsesOneGuidedSessionForAllTargets(t *testing.T) {
 	restoreCLISeams(t)
+	setCLIInput(t, "y\n")
 	getForeignPkgsFn = func() ([]pacman.ForeignPkg, error) {
 		return []pacman.ForeignPkg{{Name: "a", Version: "1-1"}, {Name: "b", Version: "1-1"}}, nil
 	}

@@ -380,14 +380,15 @@ var upgradeHelp = commandHelpSpec{
 	Summary: "Review, build, and install available AUR upgrades.",
 	Usage:   "go-rua upgrade [options]",
 	Description: []string{
-		"Compare installed foreign packages with AUR versions, compute dependency order, review each outdated package, and install the resulting archives.",
+		"The update command is an alias for upgrade and accepts the same options.",
+		"Compare installed foreign packages with AUR versions and preview version changes, build order, and missing dependencies. Proceed with upgrade? [y/N] requires y or yes before installing repository dependencies or starting recipe reviews. Empty input or EOF cancels.",
 		"Applying upgrades is the default and performs privileged package-manager operations. Use --plan or --printonly to inspect available work without building or installing packages.",
 		"In --plan mode, best-effort GitHub release and Git-tag checks report when a supported static recipe appears to lag upstream. Bare upgrade remains AUR-only.",
 		"--upstream is an explicit trust decision: eligible GitHub artifacts or immutable Git commits are verified, an ephemeral recipe copy is rewritten, and the exact diff requires approval before build and installation. --validate-all-arches additionally requires complete evidence for every declared architecture.",
 	},
 	Sections: []helpSection{
 		{Title: "Modes", Entries: []helpEntry{
-			{Label: "Default", Description: "Review, build, stage, and install every selected upgrade"},
+			{Label: "Default", Description: "Preview and confirm the plan, then review, build, stage, and install every selected upgrade"},
 			{Label: "--plan", Description: "Show AUR work plus read-only upstream source, confidence, asset/Git-ref, sidecar, and AUR-lag status"},
 			{Label: "--plan --upstream", Description: "Also prove override eligibility and show intended source/checksum indices; never download artifacts"},
 			{Label: "--upstream", Description: "Include eligible GitHub versions newer than the installed package, with verification and approval"},

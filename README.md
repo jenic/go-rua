@@ -58,7 +58,7 @@ instead of appearing as empty results; add a more specific term if needed.
 - AUR info includes Depends/MakeDepends/CheckDepends fields.
 - Pre-install summary shows missing repo deps and unknown/virtual deps.
 - `install --plan` prints a build plan with topological order, repo deps to install, and unknowns.
-- `upgrade --plan` prints the plan; `upgrade` reviews, builds, and installs outdated packages using the computed build order.
+- `upgrade --plan` prints the plan; `upgrade` previews versions, build order, and missing dependencies, then asks `Proceed with upgrade? [y/N]` before continuing. Only `y` or `yes` proceeds; empty input or EOF cancels.
 - `upgrade --devel` considers VCS packages (-git/-hg/-bzr/-svn/-cvs/-darcs) as candidates.
 - `upgrade --ignore` and pacman `IgnorePkg` omit packages from upgrade checks; nonexistent packages are reported.
 - `upgrade --plan` performs best-effort GitHub reporting for supported static recipes. This includes canonical release assets and tag-pinned `git+https://github.com/OWNER/REPO[.git]#tag=...` sources. `upgrade --upstream` explicitly opts into an ephemeral verified recipe override; `--validate-all-arches` requires every declared architecture source and verification mapping.
@@ -67,8 +67,10 @@ instead of appearing as empty results; add a more specific term if needed.
 
 ## Guided upgrades
 
-`go-rua upgrade` processes one dependency plan and reviews/builds each package
-base once. Dependencies already at a sufficient version are reused. At the
+`go-rua upgrade` (or `go-rua update`) first previews the upgrade plan and asks for
+confirmation before installing repository dependencies or starting recipe reviews.
+It then processes that dependency plan and reviews/builds each package base once.
+Dependencies already at a sufficient version are reused. At the
 recipe prompt, **A** approves the displayed recipe and findings, **D** redisplays
 the diff, **S** skips that package base, and **Q** cancels. End-of-input cancels;
 it never approves. A skipped dependency blocks consumers only when the installed
