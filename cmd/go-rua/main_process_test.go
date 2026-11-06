@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"go-rua/internal/aur"
 	"go-rua/internal/term"
 )
 
@@ -159,6 +160,42 @@ func TestMainProcessColorFlagHandling(t *testing.T) {
 	}
 }
 
+func TestMainProcessSearchColor(t *testing.T) {
+	for _, key := range []string{"NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "TERM"} {
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const plain = "foo 1.2-3 - hello\n"
+	const colored = "\x1b[36mfoo\x1b[0m \x1b[32m1.2-3\x1b[0m - hello\n"
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+		want string
+	}{
+		{name: "equals before command", args: []string{"--color=always", "search", "foo"}, want: colored},
+		{name: "equals after command", args: []string{"search", "--color=always", "foo"}, want: colored},
+		{name: "split after command", args: []string{"search", "--color", "always", "foo"}, want: colored},
+		{name: "always overrides environment", args: []string{"search", "--color", "always", "foo"}, env: map[string]string{"NO_COLOR": "1", "TERM": "dumb"}, want: colored},
+		{name: "never overrides force", args: []string{"search", "--color", "never", "foo"}, env: map[string]string{"CLICOLOR_FORCE": "1"}, want: plain},
+		{name: "auto with redirected stdout", args: []string{"search", "--color", "auto", "foo"}, env: map[string]string{"TERM": "xterm"}, want: plain},
+		{name: "default with redirected stdout", args: []string{"search", "foo"}, env: map[string]string{"TERM": "xterm"}, want: plain},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+			stdout, stderr, code := runMainProcess(t, "main-search", "", tt.args...)
+			if code != 0 || stdout != tt.want || stderr != "" {
+				t.Fatalf("search: exit code = %d, stdout = %q, stderr = %q; want code 0, stdout %q, empty stderr", code, stdout, stderr, tt.want)
+			}
+		})
+	}
+}
+
 func TestMainProcessColorFlagRejectsInvalidValues(t *testing.T) {
 	tests := []struct {
 		name string
@@ -302,6 +339,15 @@ func TestMainProcessHelper(t *testing.T) {
 	case "main-color":
 		main()
 		fmt.Fprintf(os.Stderr, "RUA_COLOR=%s TERM_ENABLED=%t\n", os.Getenv("RUA_COLOR"), term.Enabled())
+	case "main-search":
+		aurSearchANDFn = func(terms []string) ([]aur.Package, error) {
+			if len(terms) != 1 || terms[0] != "foo" {
+				return nil, fmt.Errorf("unexpected search terms: %q", terms)
+			}
+			return []aur.Package{{Name: "foo", Version: "1.2-3", Description: " hello "}}, nil
+		}
+		main()
+		os.Exit(0)
 	case "fatalf":
 		fatalf("fatal path: %s", "boom")
 	default:

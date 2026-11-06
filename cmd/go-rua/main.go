@@ -393,8 +393,13 @@ func searchCmd(args []string) {
 	if err != nil {
 		fatalf("search failed: %v", err)
 	}
+	color := term.EnabledFor(os.Stdout)
 	for _, p := range results {
-		fmt.Printf("%s %s - %s\n", p.Name, p.Version, strings.TrimSpace(p.Description))
+		name, version := p.Name, p.Version
+		if color {
+			name, version = term.Cyan(name), term.Green(version)
+		}
+		fmt.Printf("%s %s - %s\n", name, version, strings.TrimSpace(p.Description))
 	}
 }
 
