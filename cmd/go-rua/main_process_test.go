@@ -67,6 +67,22 @@ func TestMainProcessEntryExit(t *testing.T) {
 			wantStdout: []string{"Review, build, and install available AUR upgrades.", "--printonly", "Exit status:", "go-rua upgrade --plan"},
 		},
 		{
+			name:       "update alias help flag prints upgrade help",
+			args:       []string{"update", "--help"},
+			wantStdout: []string{"Review, build, and install available AUR upgrades.", "--printonly", "go-rua upgrade --plan"},
+		},
+		{
+			name:       "update help topic prints upgrade help",
+			args:       []string{"help", "update"},
+			wantStdout: []string{"Review, build, and install available AUR upgrades.", "go-rua upgrade [options]"},
+		},
+		{
+			name:       "update alias forwards upgrade options",
+			args:       []string{"update", "--validate-all-arches"},
+			wantCode:   1,
+			wantStderr: []string{"--validate-all-arches requires --upstream"},
+		},
+		{
 			name:       "upstream command has dedicated help",
 			args:       []string{"upstream", "--help"},
 			wantStdout: []string{"Inspect upstream status", "github_upstream.json", "--export-evidence", "--gc-evidence"},

@@ -137,7 +137,7 @@ func main() {
 		infoCmd(os.Args[2:])
 	case "tarcheck":
 		tarcheckCmd(os.Args[2:])
-	case "upgrade":
+	case "upgrade", "update":
 		upgradeCmd(os.Args[2:])
 	case "upstream":
 		upstreamCmd(os.Args[2:])
@@ -184,7 +184,7 @@ func helpCmd(args []string) {
 		infoCmd([]string{"--help"})
 	case "tarcheck":
 		tarcheckCmd([]string{"--help"})
-	case "upgrade":
+	case "upgrade", "update":
 		upgradeCmd([]string{"--help"})
 	case "upstream":
 		upstreamCmd([]string{"--help"})

@@ -18,7 +18,8 @@ A lightweight reimplementation of RUA (AUR helper) in Go, sandboxed with Landloc
 - **tarcheck:** Inspect a built package archive interactively (SUID, execs, INSTALL, etc.).
 - **search:** Search AUR by name/description via RPC; ALL provided keywords must match (AND semantics).
 - **info:** Show AUR package info via RPC (human-readable; use `--json` for raw JSON).
-- **upgrade:** Review, build, and install outdated AUR packages by default; `--plan` only prints the upgrade plan.
+- **upgrade:** Preview outdated AUR packages and ask for confirmation before reviewing, building, and installing; `--plan` only prints the upgrade plan.
+  - Alias: `update` accepts the same flags and performs the same actions.
   - Guided flow: automatic recipe diff and audits → approve → fast-forward → verify sources → sandboxed build → automatic artifact report → pacman confirmation.
   - Flags include `--upstream` for explicit verified GitHub overrides and `--validate-all-arches` for complete architecture validation.
 - **upstream:** Inspect configured or discovered GitHub candidates as text or JSON and manage bounded verification evidence.

@@ -182,6 +182,7 @@ func printGlobalHelp(w io.Writer) {
 		{Label: "info", Description: "Show AUR package metadata"},
 		{Label: "tarcheck", Description: "Interactively inspect a built package archive"},
 		{Label: "upgrade", Description: "Review, build, and install available AUR upgrades"},
+		{Label: "update", Description: "Alias for upgrade"},
 		{Label: "upstream", Description: "Inspect GitHub upstream status and manage verification evidence"},
 		{Label: "version", Description: "Print the go-rua version"},
 	})
