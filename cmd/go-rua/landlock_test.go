@@ -407,6 +407,9 @@ func TestLandlockIntegrationProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if info.GoVersion != runtime.Version() {
+		t.Fatalf("binary compiler %q must match verified go.mod test compiler %q", info.GoVersion, runtime.Version())
+	}
 	for _, dep := range info.Deps {
 		if dep.Path == "github.com/landlock-lsm/go-landlock" {
 			if dep.Version != "v0.0.0-20250303204525-1544bccde3a3" || dep.Sum != "h1:zcMi8R8vP0WrrXlFMNUBpDy/ydo3sTnCcUPowq1XmSc=" || dep.Replace != nil {

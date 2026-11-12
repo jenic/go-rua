@@ -2,7 +2,7 @@ module go-rua
 
 go 1.26.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/landlock-lsm/go-landlock v0.0.0-20250303204525-1544bccde3a3

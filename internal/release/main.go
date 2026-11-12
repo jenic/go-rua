@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"flag"
 	"fmt"
 	"os"
@@ -52,7 +53,21 @@ func build(root, output, cache, version string) error {
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GOWORK=off", "CGO_ENABLED=1", "GOOS=linux", "GOARCH=amd64", "GOCACHE="+cache)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	return verifyCompiler(output, runtime.Version())
+}
+
+func verifyCompiler(binary, expected string) error {
+	info, err := buildinfo.ReadFile(binary)
+	if err != nil {
+		return fmt.Errorf("read release compiler: %w", err)
+	}
+	if info.GoVersion != expected {
+		return fmt.Errorf("release compiler %q does not match verified builder %q", info.GoVersion, expected)
+	}
+	return nil
 }
 
 func archive(binary, readme []byte) ([]byte, error) {

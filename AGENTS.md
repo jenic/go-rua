@@ -24,7 +24,15 @@
 - Release build: `make release-all VERSION=v1.2.3`; reproducibility: `make verify-repro VERSION=v1.2.3`
 - Packaged executable gate: `make test-release-binary VERSION=v1.2.3 RELEASE_BINARY=/absolute/path/go-rua` (does not rebuild it)
 
-Requirements: Go 1.26+ with toolchain `go1.26.10`, Linux kernel with Landlock ABI 3+ for the Landlock backend, Arch tools (`makepkg`, `pacman`, `vercmp`, `tar`, `git`, `shellcheck`, `namcap`).
+Requirements: the exact Go toolchain declared in `go.mod`, Python 3 (3.11+ for the full release test suite), Linux kernel with Landlock ABI 3+ for the Landlock backend, Arch tools (`makepkg`, `pacman`, `vercmp`, `tar`, `git`, `shellcheck`, `namcap`).
+
+## Toolchain Source of Truth
+
+The `toolchain` directive in `go.mod` is the sole source of truth for the exact supported Go toolchain version. The `go` directive is the minimum requirement, not the project's exact compiler pin. Keep an explicit stable `toolchain go1.X.Y` directive; never duplicate the current version in Makefiles, workflows, or documentation.
+
+Use the standard-library-only `scripts/go_toolchain.py` for parsing, compiler checks, and execution. Makefile Go commands use its `exec` mode; CI uses `check-installed` after setup from `go.mod`. Conflicting `GOTOOLCHAIN` overrides (including `auto` and `local`) are rejected. `make toolchain` validates and displays the compiler; `print` mode needs no Go installation. Direct Go commands must use `python3 scripts/go_toolchain.py exec go <arguments>` and verify modules before using dependencies. Offline development requires the exact authentic compiler to be installed or cached; never substitute another version.
+
+Compiler upgrades change `go.mod` and must pass `make check test-release` and reproducibility verification. Release and packaged-binary checks compare embedded compiler versions before attestation. Existing SLSA provenance binds artifacts to the source commit containing `go.mod`; do not claim a new compiler field or higher SLSA level. Reproducibility still requires matching C compiler, libc, and build environment.
 
 ## Dependency Integrity and Workspaces
 

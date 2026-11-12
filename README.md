@@ -189,6 +189,7 @@ It does not install the fixture into the host package database.
 
 ## Development
 
+- Toolchain: `make toolchain` (validates and displays the exact compiler)
 - Build: `make build` (formats first, then writes `bin/go-rua`)
 - Format: `make fmt`
 - Test: `make test` (formats first)
@@ -197,6 +198,26 @@ It does not install the fixture into the host package database.
 - Global help: `go-rua help` or `go-rua --help`
 - Detailed command help: `go-rua help <command>`, `go-rua <command> --help`, or `go-rua <command> -h`
 - Smoke test: `make smoke` (best-effort; skips AUR checks if offline)
+
+The `toolchain` directive in `go.mod` is the sole source of truth for the exact
+supported Go toolchain version. The `go` directive specifies Go's minimum
+requirement; supported builds additionally require the exact `toolchain` version,
+even when a newer compiler is installed. Build tooling requires Python 3 (3.11+
+for the full release test suite), using only its standard library.
+
+`scripts/go_toolchain.py` centralizes selection and validation for Make and CI.
+`make toolchain` reports the effective compiler;
+`python3 scripts/go_toolchain.py print` displays the declaration without invoking Go. Unset or matching
+`GOTOOLCHAIN` values are accepted; conflicting versions, `auto`, and `local` are
+rejected. An unavailable compiler fails instead of falling back. Go may obtain
+the exact compiler through its normal verified toolchain download mechanism;
+offline builds require it installed or authentically cached first.
+
+To upgrade the supported compiler, edit only the `toolchain` directive in
+`go.mod`, then run `make check test-release` and `make verify-repro`. Do not
+repeat the current compiler version in Makefiles, workflows, or documentation.
+For direct Go commands, use `python3 scripts/go_toolchain.py exec go <arguments>`
+from the repository root, and run module verification before using dependencies.
 
 Makefile Go commands set `GOWORK=off`, use local caches, verify module checksums,
 and reject Landlock replacements. Offline builds require the authentic pinned
@@ -217,8 +238,9 @@ integrity, vet, unit tests, pinned govulncheck, mandatory Landlock ABI 3+
 enforcement, and an unprivileged Arch fixture build with an isolated pacman
 transaction. Missing sandbox capabilities fail CI rather than skipping a gate.
 
-Builds require Go 1.26.10 and a native C compiler: tree-sitter and all-thread
-Landlock enforcement require CGO. Release executables retain PIE and dynamic
+Builds require the exact Go toolchain declared in `go.mod` and a native C
+compiler: tree-sitter and all-thread Landlock enforcement require CGO.
+Release executables retain PIE and dynamic
 libc linking. CI builds with Ubuntu 24.04's glibc toolchain and tests the same
 executable in current Arch userspace; no Windows, macOS, or ARM artifacts are
 produced.
@@ -241,6 +263,15 @@ two builds with independent caches. Reproducibility assumes identical source,
 Go toolchain, C compiler, libc, and build environment. Archives contain `go-rua`
 and `README.md` with normalized permissions and timestamps. Existing signed or
 attested output in `dist` must be moved aside before building a new release.
+
+The toolchain decision keeps compiler upgrades in the same reviewed source
+commit as the build inputs. CI installs from `go.mod`, checks the installed
+compiler without automatic switching, and validates the compiler embedded in
+the release binary before attestation. SLSA provenance binds artifact digests
+to the source commit and workflow; that commit's `go.mod` defines the required
+compiler. The existing attestation does not add a compiler-version field, and
+this policy does not change the claimed SLSA level. Matching Go alone does not
+make builds reproducible across different C compilers, libc, or environments.
 
 ### Maintainer setup and publishing
 

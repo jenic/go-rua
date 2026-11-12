@@ -9,9 +9,26 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestVerifyCompiler(t *testing.T) {
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCompiler(binary, runtime.Version()); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCompiler(binary, "go1.0.0"); err == nil || !strings.Contains(err.Error(), "does not match verified builder") {
+		t.Fatalf("must reject a binary compiled with another toolchain: %v", err)
+	}
+	if err := verifyCompiler(filepath.Join(t.TempDir(), "missing"), runtime.Version()); err == nil {
+		t.Fatal("must reject unreadable build information")
+	}
+}
 
 func TestArchive(t *testing.T) {
 	packed, err := archive([]byte("binary"), []byte("readme"))

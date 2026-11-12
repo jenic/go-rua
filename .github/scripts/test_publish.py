@@ -59,8 +59,10 @@ elif tool == 'go':
     assert os.environ['GOWORK'] == 'off'
     assert os.environ['GOCACHE'] == str(p.cwd() / '.gocache')
     assert os.environ['GOMODCACHE'] == str(p.cwd() / '.gomodcache')
-    assert os.environ['GOTOOLCHAIN'] == 'go1.26.10'
-    if args == ['mod', 'verify']: fail('FAIL_VERIFY')
+    expected = (p.cwd() / 'go.mod').read_text().split('toolchain ')[1].split()[0]
+    assert os.environ['GOTOOLCHAIN'] == expected
+    if args == ['env', 'GOVERSION']: print(expected)
+    elif args == ['mod', 'verify']: fail('FAIL_VERIFY')
     elif args[0] == 'list': pass
     elif args[0] in ['fmt', 'vet']: assert '-mod=readonly' in args
     elif args[0] == 'test':
@@ -89,6 +91,10 @@ class PublishTests(unittest.TestCase):
         for name in ['Makefile', 'publish.sh']:
             shutil.copyfile(ROOT / name, self.worktree / name)
         shutil.copyfile(ROOT / '.github/scripts/release.sh', scripts / 'release.sh')
+        helper_dir = self.worktree / 'scripts'
+        helper_dir.mkdir()
+        shutil.copyfile(ROOT / 'scripts/go_toolchain.py', helper_dir / 'go_toolchain.py')
+        shutil.copyfile(ROOT / 'go.mod', self.worktree / 'go.mod')
         (scripts / 'test_check.py').write_text(
             'import os, pathlib, unittest\n'
             'class Check(unittest.TestCase):\n'
