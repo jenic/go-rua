@@ -29,10 +29,12 @@ def declared_toolchain(root=ROOT):
     return version
 
 
-def toolchain_env(version, root=ROOT):
+def toolchain_env(version, root=ROOT, installed=False):
     env = dict(os.environ)
     requested = env.get("GOTOOLCHAIN")
-    if requested and requested != version:
+    # setup-go exports local. Installed checks deliberately disable switching
+    # and verify the compiler itself; execution must still use the exact pin.
+    if requested and requested != version and not (installed and requested == "local"):
         raise ValueError(f"GOTOOLCHAIN={requested!r} conflicts with go.mod toolchain {version}; unset it or use {version}")
     env.update(GOTOOLCHAIN=version, GOWORK="off")
     for name, directory in (("GOPATH", ".gopath"), ("GOCACHE", ".gocache"),
@@ -60,6 +62,8 @@ def main():
     commands.add_parser("print", help="print the exact go.mod toolchain without invoking Go")
     installed = commands.add_parser("check-installed", help="verify the installed compiler without switching")
     installed.add_argument("--go", default=os.environ.get("GO") or "go")
+    installed.add_argument("--github-env", action="store_true",
+                           help="export the verified exact toolchain for later GitHub Actions steps")
     execute = commands.add_parser("exec", help="verify and execute Go with the exact declared toolchain")
     execute.add_argument("go")
     execute.add_argument("arguments", nargs=argparse.REMAINDER)
@@ -69,9 +73,15 @@ def main():
         if args.mode == "print":
             print(version)
             return
-        env = toolchain_env(version)
+        env = toolchain_env(version, installed=args.mode == "check-installed")
         check_version(args.go, version, env, installed=args.mode == "check-installed")
         if args.mode == "check-installed":
+            if args.github_env:
+                env_file = os.environ.get("GITHUB_ENV")
+                if not env_file:
+                    raise ValueError("--github-env requires the GITHUB_ENV environment file")
+                with Path(env_file).open("a", encoding="utf-8") as destination:
+                    destination.write(f"GOTOOLCHAIN={version}\n")
             print(f"go.mod toolchain: {version}; installed compiler: {version}")
             return
         os.execvpe(args.go, [args.go, *args.arguments], env)

@@ -152,6 +152,45 @@ class ToolchainTests(unittest.TestCase):
         self.run_helper('check-installed', '--go', self.go, success=False, INSTALLED_VERSION='go1.27.0')
         self.assertTrue(all(env['GOTOOLCHAIN'] == 'local' for _, env in self.calls()))
 
+    def test_github_environment_transitions_from_setup_go_local_to_exact_version(self):
+        env_file = self.root / 'github-env'
+        env_file.write_text('GOTOOLCHAIN=local\nOTHER=preserved\n')
+        self.run_helper('check-installed', '--github-env', '--go', self.go,
+                        GOTOOLCHAIN='local', GITHUB_ENV=str(env_file))
+        self.assertEqual(env_file.read_text(),
+                         f'GOTOOLCHAIN=local\nOTHER=preserved\nGOTOOLCHAIN={self.version}\n')
+        exported = dict(line.split('=', 1) for line in env_file.read_text().splitlines())
+        self.run_make('verify', **exported)
+        self.run_make('toolchain', **exported)
+        calls = self.calls()
+        self.assertEqual(calls[0][1]['GOTOOLCHAIN'], 'local')
+        self.assertTrue(all(env['GOTOOLCHAIN'] == self.version for _, env in calls[1:]))
+
+    def test_github_environment_is_unchanged_when_installed_compiler_check_fails(self):
+        env_file = self.root / 'github-env'
+        for failure in ({'INSTALLED_VERSION': 'go1.27.0'}, {'PROBE_FAIL': '1'}):
+            with self.subTest(failure=failure):
+                env_file.write_text('GOTOOLCHAIN=local\n')
+                self.run_helper('check-installed', '--github-env', '--go', self.go,
+                                success=False, GOTOOLCHAIN='local',
+                                GITHUB_ENV=str(env_file), **failure)
+                self.assertEqual(env_file.read_text(), 'GOTOOLCHAIN=local\n')
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_github_environment_export_requires_an_environment_file(self):
+        env = dict(self.env)
+        env.pop('GITHUB_ENV', None)
+        self.env = env
+        result = self.run_helper('check-installed', '--github-env', '--go', self.go,
+                                 success=False, GOTOOLCHAIN='local')
+        self.assertIn('GITHUB_ENV', result.stderr)
+
+    def test_installed_check_rejects_other_conflicting_overrides(self):
+        for override in ('auto', 'go1.27.0', self.version + '+auto'):
+            self.run_helper('check-installed', '--go', self.go, success=False,
+                            GOTOOLCHAIN=override)
+        self.assertEqual(self.calls(), [])
+
     def test_nested_go_process_inherits_exact_version(self):
         data = json.loads(self.run_helper('exec', self.go, 'run', 'nested').stdout)
         self.assertEqual(data['toolchain'], self.version)
@@ -188,7 +227,7 @@ class WorkflowToolchainTests(unittest.TestCase):
                 self.assertIn('cache: false', content)
                 self.assertNotRegex(content, r'\bgo-version:')
                 self.assertNotIn('GOTOOLCHAIN:', content)
-                check = content.index('python3 scripts/go_toolchain.py check-installed')
+                check = content.index('python3 scripts/go_toolchain.py check-installed --github-env')
                 self.assertLess(content.index('uses: actions/setup-go@'), check)
                 self.assertLess(check, content.index('run: bash .github/scripts/prepare-linux.sh'))
                 self.assertLess(check, content.index('make verify-repro'))

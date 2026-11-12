@@ -213,6 +213,12 @@ rejected. An unavailable compiler fails instead of falling back. Go may obtain
 the exact compiler through its normal verified toolchain download mechanism;
 offline builds require it installed or authentically cached first.
 
+After compiler setup, CI runs `check-installed --github-env`. This check accepts
+the setup action's `GOTOOLCHAIN=local` only to inspect the installed compiler
+without switching. Once its version matches `go.mod`, the helper appends the
+exact toolchain to `GITHUB_ENV` for subsequent steps. A mismatch fails before
+exporting a version; build commands continue to reject `local` overrides.
+
 To upgrade the supported compiler, edit only the `toolchain` directive in
 `go.mod`, then run `make check test-release` and `make verify-repro`. Do not
 repeat the current compiler version in Makefiles, workflows, or documentation.

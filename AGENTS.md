@@ -34,6 +34,8 @@ Use the standard-library-only `scripts/go_toolchain.py` for parsing, compiler ch
 
 Compiler upgrades change `go.mod` and must pass `make check test-release` and reproducibility verification. Release and packaged-binary checks compare embedded compiler versions before attestation. Existing SLSA provenance binds artifacts to the source commit containing `go.mod`; do not claim a new compiler field or higher SLSA level. Reproducibility still requires matching C compiler, libc, and build environment.
 
+CI must invoke `check-installed --github-env` after compiler setup. Only the installed check accepts the setup action's inherited `GOTOOLCHAIN=local`, with switching disabled and the actual compiler checked against `go.mod`. After success, the helper appends the exact declared version to `GITHUB_ENV` for later steps. Build execution still rejects `local`; do not weaken exact-version enforcement to accommodate the setup environment.
+
 ## Dependency Integrity and Workspaces
 
 Use the pinned upstream `github.com/landlock-lsm/go-landlock` module from `go.mod` and `go.sum`. Never replace this security dependency with a local stub, fork, or workspace module. A successful no-op implementation would disable filesystem enforcement while reporting success.

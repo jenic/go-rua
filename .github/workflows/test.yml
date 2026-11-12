@@ -33,7 +33,7 @@ jobs:
           check-latest: false
           cache: false
       - name: Verify installed Go toolchain against go.mod
-        run: python3 scripts/go_toolchain.py check-installed
+        run: python3 scripts/go_toolchain.py check-installed --github-env
       - name: Prepare build tools and dependencies
         run: bash .github/scripts/prepare-linux.sh
       - run: make check test-release
